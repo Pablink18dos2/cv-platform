@@ -1,6 +1,8 @@
-# CI mínimo. Adapta los pasos a tu stack.
-# Criterio 11 del proyecto final: 1 punto si ejecuta tests,
+# CI. Criterio 11 del proyecto final: 1 punto si ejecuta tests,
 # 2 puntos si además despliega cuando los tests pasan.
+#
+# Los tests marcados `network` y `slow` quedan fuera a propósito: el runner no debe
+# depender de que YouTube esté sirviendo un directo ni descargar pesos de modelos.
 
 name: CI
 
@@ -10,12 +12,11 @@ on:
   pull_request:
 
 jobs:
-  test:
+  backend:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      # --- Python + uv (por defecto) ---
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
@@ -23,28 +24,38 @@ jobs:
       - name: Install dependencies
         run: uv sync
 
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Format check
+        run: uv run ruff format --check .
+
       - name: Run tests
-        run: uv run pytest
+        run: uv run pytest -m "not slow and not network"
 
-      # --- Node (descomenta si tienes frontend) ---
-      # - uses: actions/setup-node@v4
-      #   with:
-      #     node-version: '22'
-      #     cache: npm
-      #     cache-dependency-path: frontend/package-lock.json
-      # - run: npm ci
-      #   working-directory: frontend
-      # - run: npm test
-      #   working-directory: frontend
+  # --- Frontend: se activa en la tarea 13, cuando exista frontend/ ---
+  # frontend:
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: actions/setup-node@v4
+  #       with:
+  #         node-version: '22'
+  #         cache: npm
+  #         cache-dependency-path: frontend/package-lock.json
+  #     - run: npm ci
+  #       working-directory: frontend
+  #     - run: npm test
+  #       working-directory: frontend
 
-  # --- Despliegue: descomenta cuando tengas plataforma elegida ---
+  # --- Despliegue: se activa cuando esté elegida la plataforma ---
   # deploy:
-  #   needs: test
+  #   needs: [backend, frontend]
   #   if: github.ref == 'refs/heads/main'
   #   runs-on: ubuntu-latest
   #   steps:
   #     - uses: actions/checkout@v4
   #     - name: Deploy
-  #       run: echo "Render / Fly.io / Railway / Cloud Run"
+  #       run: echo "Render / Fly.io / Hugging Face Spaces"
   #       env:
   #         DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}

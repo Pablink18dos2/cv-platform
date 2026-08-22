@@ -37,3 +37,16 @@ Thumbs.db
 
 # Agentes: configuración local no compartida
 .claude/settings.local.json
+
+# Modelos y datos: pesados y reproducibles, fuera del repo
+models/
+data/
+runs/
+*.pt
+*.onnx
+*_openvino_model/
+
+# Salidas del pipeline (los fixtures de test si van al repo)
+*.jsonl
+*.mp4
+!tests/fixtures/**/*.mp4
