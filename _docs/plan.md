@@ -159,7 +159,9 @@ el enfoque.
 
 ## Open questions
 
-- URL concreta del directo de YouTube del primer prototipo. **Bloquea el issue del connector.**
+- ~~URL concreta del directo de YouTube del primer prototipo.~~ Resuelta: *Town of Collingwood
+  Live Stream*, 1080p30. El reconocimiento de la fuente está en
+  [`projects/01-parking-trafico/fuente.md`](../projects/01-parking-trafico/fuente.md).
 - ¿Se guardan las detecciones individuales o solo los agregados por minuto? Empezamos por
   agregados y una muestra de detecciones; revisar cuando se vea crecer la base de datos.
 - Dónde se despliega la API/frontend cuando toque (criterio 10 del checklist del curso).
