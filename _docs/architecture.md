@@ -58,7 +58,7 @@ Reglas que valen para todas:
 ```python
 class Detector(Protocol):
     def warmup(self) -> None: ...
-    def detect(self, frame: Frame) -> list[Detection]: ...
+    def detect(self, frame: Frame, roi: BBox | None = None) -> list[Detection]: ...
 ```
 
 Implementaciones: `yolo` (ultralytics), y más adelante `openvino_yolo`, `rtdetr`.
@@ -66,6 +66,12 @@ Implementaciones: `yolo` (ultralytics), y más adelante `openvino_yolo`, `rtdetr
 - El detector devuelve `Detection` **normalizada** (bbox en píxeles xyxy, `class_id`, `label`,
   `confidence`). Nada del formato de ultralytics sale de este bloque: es lo que permite cambiar
   de modelo sin tocar los analizadores.
+- El `roi` opcional sale de [rendimiento.md](rendimiento.md): recortar la región útil e inferir a
+  640 detecta más vehículos en ella que el fotograma completo a 1280, y a menos de la mitad de
+  coste (5,6 fps frente a 2,7 fps). El `roi` va en píxeles del fotograma original, `roi=None` es
+  el fotograma completo, y las `Detection` vuelven **siempre** en coordenadas del fotograma
+  original: quien recorta, traduce de vuelta. Es un argumento por llamada y no estado del
+  detector, para que dos analizadores puedan pedir regiones distintas del mismo fotograma.
 - El filtrado por clase y confianza vive aquí, configurado por YAML.
 
 ### 3. `Tracker` — quién es quién entre fotogramas

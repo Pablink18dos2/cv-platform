@@ -5,6 +5,10 @@ description = "Plataforma local de vision por computador: connectors de video, m
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    # `cvp.core` importa numpy directamente (el buffer de `Frame`), asi que se declara
+    # aqui en vez de seguir entrando de forma transitiva por ultralytics: el core tiene
+    # que poder instalarse sin el detector y seguir funcionando.
+    "numpy>=2.1",
     "ultralytics>=8.3",
     "yt-dlp>=2026.8.19",
 ]

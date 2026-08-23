@@ -369,6 +369,7 @@ name = "cv-platform"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "numpy" },
     { name = "ultralytics" },
     { name = "yt-dlp" },
 ]
@@ -382,6 +383,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "numpy", specifier = ">=2.1" },
     { name = "ultralytics", specifier = ">=8.3" },
     { name = "yt-dlp", specifier = ">=2026.8.19" },
 ]
