@@ -12,6 +12,7 @@ comprobacion no valdria nada.
 
 from __future__ import annotations
 
+import functools
 import json
 import subprocess
 import sys
@@ -45,7 +46,10 @@ PROGRAMA = (
 )
 
 
+@functools.cache
 def _modulos_cargados_al_validar() -> dict[str, object]:
+    """Un solo subproceso para los dos tests: arrancar un interprete cuesta casi un
+    segundo y la respuesta es la misma."""
     resultado = subprocess.run(
         [sys.executable, "-c", PROGRAMA, str(VALIDO)],
         capture_output=True,
