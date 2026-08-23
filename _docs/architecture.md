@@ -151,16 +151,26 @@ name: Parking y tráfico
 
 source:
   type: youtube_live
-  url: <URL del directo>
-  target_fps: 5
+  url: ${YT_URL}                # ${VAR} y ${VAR:-por defecto}; $VAR sin llaves no se expande
+  target_fps: 5                 # obligatorio: cuánto se mide es decisión del proyecto
+  format: "96"
+  # Sin estos clientes yt-dlp responde "This video is not available", que parece un vídeo
+  # caído y no lo es (ver projects/01-parking-trafico/fuente.md). Escribir el campo
+  # sustituye el valor por defecto entero, no lo fusiona.
+  extractor_args:
+    youtube:
+      player_client: [web_safari, tv, android]
+  # La URL HLS caduca a las 6 h exactas: re-resolverla antes evita un hueco de datos.
+  refresh_url_every_s: 18000    # 5 h; rango válido [60, 21600]
   reconnect: { max_retries: 20, backoff_s: [1, 2, 5, 15, 30, 60] }
 
 detector:
   type: yolo
-  weights: yolo11n.pt
-  imgsz: 640
+  weights: yolo11n.pt           # cadena opaca, no una ruta: la resuelve el detector
+  imgsz: 640                    # múltiplo de 32, entre 320 y 1280
   conf: 0.35
   classes: [car, motorcycle, bus, truck]
+  roi: [0.0, 0.33, 1.0, 1.0]    # fracciones [x1, y1, x2, y2]
 
 tracker:
   type: bytetrack
@@ -169,10 +179,10 @@ analyzers:
   - type: traffic_flow
     every_n_frames: 1
     lines:
-      - { id: principal, p1: [120, 640], p2: [1180, 610], positive_direction: norte }
+      - { id: principal, p1: [0.06, 0.59], p2: [0.61, 0.56], positive_direction: norte }
   - type: parking_occupancy
     every_n_frames: 10          # ~0,5 fps: una plaza no cambia en dos segundos
-    zones_file: zones.json
+    zones_file: zones.json      # relativo a este fichero; sus polígonos, en fracciones
     occupied_iou: 0.35
     hysteresis: { to_occupied_s: 6, to_free_s: 10 }
 
@@ -182,7 +192,31 @@ sinks:
 ```
 
 La configuración se valida con Pydantic **al arrancar**. Un YAML mal escrito falla en el
-segundo 0 con el nombre del campo, no en el minuto 40 con un `KeyError`.
+segundo 0 con el nombre del campo, no en el minuto 40 con un `KeyError`. Se reportan
+**todos** los errores de una vez, y un campo desconocido o una clave repetida son errores,
+no algo que se ignore en silencio.
+
+Tres reglas que valen para todo el fichero:
+
+- **Toda la geometría va en fracciones 0-1** del ancho y del alto del fotograma, nunca en
+  píxeles. La fuente sirve el mismo directo en 1080p, 720p, 480p y 360p: con píxeles,
+  cambiar el `format` invalida en silencio todas las líneas y todos los ROI, y las cajas
+  se siguen dibujando, solo que en el sitio equivocado. `cvp.core` habla solo en píxeles
+  (`BBox`, el `roi` del `Detector`) y la traducción la hace el runner una vez, después de
+  `source.open()`, cuando `SourceInfo` ya dice `width` y `height`. Ningún analizador ni
+  ningún detector ve jamás una fracción.
+- **Las rutas relativas lo son al directorio que contiene el `project.yaml`**, nunca al
+  CWD ni a la raíz del repo: un proyecto es una carpeta autocontenida y `cvp run` tiene
+  que funcionar igual desde cualquier sitio. Tras la carga todas son absolutas. Las de
+  entrada (`source.path`, `zones_file`) tienen que existir ya; a las de salida se les
+  exige el directorio padre, porque la configuración no crea directorios.
+- **Una variable de entorno referenciada que no existe es un error de carga**, y una
+  definida pero vacía cuenta como ausente. Nunca se sustituye por una cadena vacía: colada
+  en una URL o en un `DATABASE_URL` produce un fallo lejos de su causa.
+
+`uv run cvp validate <fichero o directorio>` comprueba todo esto en milisegundos y sin
+cargar ningún modelo: el `type:` se resuelve contra los esquemas de `cvp.pipeline.config`,
+no contra los registros del core, que habría que rellenar importando ultralytics.
 
 ## Estructura de directorios
 
