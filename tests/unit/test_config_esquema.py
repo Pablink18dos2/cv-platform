@@ -334,18 +334,38 @@ def test_parking_occupancy_y_su_histeresis(tmp_path: Path) -> None:
     assert analizador.zones_file == (tmp_path / "zones.json").resolve()
 
 
-def test_media_histeresis_escrita_es_un_error(tmp_path: Path) -> None:
-    """Un umbral tocado y el otro heredado en silencio es mucho mas caro de encontrar."""
+@pytest.mark.parametrize(
+    ("escrito", "esperado"),
+    [
+        ({"to_occupied_s": 8}, (8.0, 10.0)),
+        ({"to_free_s": 25}, (6.0, 25.0)),
+        ({"to_occupied_s": 8, "to_free_s": 25}, (8.0, 25.0)),
+    ],
+    ids=["solo-to-occupied", "solo-to-free", "los-dos"],
+)
+def test_los_dos_umbrales_de_la_histeresis_son_independientes(
+    tmp_path: Path, escrito: dict[str, float], esperado: tuple[float, float]
+) -> None:
+    """Escribir uno solo es legal y deja el otro en su valor por defecto: los dos umbrales
+    son asimetricos a proposito y ajustar uno no obliga a repetir el otro."""
+    (tmp_path / "zones.json").write_text("{}", encoding="utf-8")
+    analyzers = [{"type": "parking_occupancy", "zones_file": "zones.json", "hysteresis": escrito}]
+    histeresis = carga(tmp_path, analyzers=analyzers).analyzers[0].hysteresis
+    assert (histeresis.to_occupied_s, histeresis.to_free_s) == esperado
+
+
+def test_un_umbral_de_histeresis_no_positivo_sigue_fallando(tmp_path: Path) -> None:
+    """Que el campo sea opcional no lo hace menos exigente cuando se escribe."""
     (tmp_path / "zones.json").write_text("{}", encoding="utf-8")
     analyzers = [
         {
             "type": "parking_occupancy",
             "zones_file": "zones.json",
-            "hysteresis": {"to_occupied_s": 6},
+            "hysteresis": {"to_free_s": 0},
         }
     ]
     assert problemas(tmp_path, analyzers=analyzers) == (
-        "analyzers[0].hysteresis.to_free_s: campo obligatorio que falta",
+        "analyzers[0].hysteresis.to_free_s: debe ser > 0, y vale 0",
     )
 
 

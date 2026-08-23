@@ -268,7 +268,7 @@ def test_el_bloque_de_errores_tiene_la_forma_exacta(monkeypatch: pytest.MonkeyPa
     esperado = "\n".join(
         [
             f"{FIXTURES / 'roto-tres-errores.yaml'}: 3 errores de configuración",
-            "  - analyzers[1].hysteresis.to_free_s: campo obligatorio que falta",
+            "  - analyzers[1].zones_file: campo obligatorio que falta",
             "  - detector.conf: debe estar entre 0 y 1, y vale 1.4",
             "  - source.target_fps: debe ser > 0, y vale -1.0",
         ]
@@ -285,7 +285,7 @@ def test_se_reportan_todos_los_errores_de_una_vez_no_el_primero() -> None:
     with pytest.raises(ConfigError) as error:
         load_project_config(FIXTURES / "roto-tres-errores.yaml", env={})
     assert error.value.problems == (
-        "analyzers[1].hysteresis.to_free_s: campo obligatorio que falta",
+        "analyzers[1].zones_file: campo obligatorio que falta",
         "detector.conf: debe estar entre 0 y 1, y vale 1.4",
         "source.target_fps: debe ser > 0, y vale -1.0",
     )

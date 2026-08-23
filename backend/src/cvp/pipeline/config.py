@@ -576,14 +576,15 @@ class Hysteresis(_ModeloBase):
     Sin esto la ocupacion parpadea con cada deteccion perdida (un autobus tapando media
     fila) y la grafica no vale para nada.
 
-    Los dos campos son obligatorios **si se escribe el bloque**: media histeresis, con un
-    umbral tocado y el otro heredado en silencio, es un error de configuracion mucho mas
-    caro de encontrar que este. Si no se escribe el bloque se usan los 6 s / 10 s de
-    `ParkingOccupancyAnalyzer.hysteresis`.
+    Los dos umbrales son **independientes** y cada uno trae su valor por defecto: el
+    bloque entero se puede omitir, y escribir solo uno de los dos es legal y deja el otro
+    en el suyo. Son asimetricos a proposito (6 s para ocupar, 10 s para liberar): liberar
+    una plaza que en realidad sigue ocupada es peor error que tardar de mas en marcarla
+    libre, asi que quien ajuste uno de los dos no tiene por que tocar el otro.
     """
 
-    to_occupied_s: Annotated[float, Field(gt=0)]
-    to_free_s: Annotated[float, Field(gt=0)]
+    to_occupied_s: Annotated[float, Field(gt=0)] = 6.0
+    to_free_s: Annotated[float, Field(gt=0)] = 10.0
 
 
 class ParkingOccupancyAnalyzer(_AnalyzerBase):
@@ -597,9 +598,7 @@ class ParkingOccupancyAnalyzer(_AnalyzerBase):
     type: Literal["parking_occupancy"]
     zones_file: _RutaEntrada
     occupied_iou: _Confianza = 0.35
-    hysteresis: Hysteresis = Field(
-        default_factory=lambda: Hysteresis(to_occupied_s=6.0, to_free_s=10.0)
-    )
+    hysteresis: Hysteresis = Field(default_factory=Hysteresis)
 
 
 # --------------------------------------------------------------------------------------
