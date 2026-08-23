@@ -22,7 +22,6 @@ VALIDO = FIXTURES / "valido.yaml"
 # Fixture roto -> un trozo del mensaje que tiene que salir, normalmente la ruta del campo
 # culpable. Es la tabla que impide que un fixture nuevo se quede sin comprobar.
 ROTOS = {
-    "roto-analyzers-vacio.yaml": "analyzers:",
     "roto-backoff-decreciente.yaml": "source.reconnect.backoff_s:",
     "roto-backoff-vacio.yaml": "source.reconnect.backoff_s:",
     "roto-campo-desconocido.yaml": "source.targt_fps:",
@@ -54,7 +53,6 @@ ROTOS = {
     "roto-ruta-salida-sin-directorio.yaml": "sinks[1].path:",
     "roto-sin-type.yaml": "source.type:",
     "roto-sinks-duplicados.yaml": "sinks[1].type:",
-    "roto-sinks-vacio.yaml": "sinks:",
     "roto-tres-errores.yaml": "detector.conf:",
     "roto-type-desconocido.yaml": "detector.type:",
     "roto-vacio.yaml": "el fichero está vacío",

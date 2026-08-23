@@ -96,11 +96,30 @@ def test_un_id_que_no_encaja_en_el_patron_falla(tmp_path: Path, valor: str) -> N
     assert problemas(tmp_path, id=valor)[0].startswith("id:")
 
 
-def test_ni_analyzers_ni_sinks_pueden_estar_vacios(tmp_path: Path) -> None:
-    assert problemas(tmp_path, analyzers=[])[0].startswith(
-        "analyzers: no puede ser una lista vacía"
+def test_analyzers_y_sinks_pueden_estar_vacios_pero_no_faltar(tmp_path: Path) -> None:
+    """`analyzers: []` y `sinks: []` son el modo con el que #8 mide el encadenado completo.
+
+    Hasta #8 una lista vacía se rechazaba. Se cambió porque, mientras no exista ningún
+    analizador implementado (#10, #11) ni ningún sink (#9), es la única configuración con
+    la que `cvp run` puede arrancar, y sin arrancar no hay fps que medir. Quien escriba una
+    lista vacía sin querer recibe un WARNING del runner al arrancar; **omitir el campo
+    entero sigue siendo un error**, que es el descuido de verdad.
+    """
+    config = carga(tmp_path, analyzers=[], sinks=[])
+    assert config.analyzers == []
+    assert config.sinks == []
+
+    documento = copy.deepcopy(MINIMO)
+    del documento["analyzers"]
+    del documento["sinks"]
+    fichero = tmp_path / "project.yaml"
+    fichero.write_text(yaml.safe_dump(documento, allow_unicode=True), encoding="utf-8")
+    with pytest.raises(ConfigError) as error:
+        load_project_config(fichero, env={})
+    assert error.value.problems == (
+        "analyzers: campo obligatorio que falta",
+        "sinks: campo obligatorio que falta",
     )
-    assert problemas(tmp_path, sinks=[])[0].startswith("sinks: no puede ser una lista vacía")
 
 
 # --- source -----------------------------------------------------------------------

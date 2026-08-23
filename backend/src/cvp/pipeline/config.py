@@ -708,6 +708,14 @@ class ProjectConfig(_ModeloBase):
     source: SourceConfig
     detector: DetectorConfig
     tracker: TrackerConfig
+    # `analyzers` y `sinks` **pueden ser listas vacias**, y los dos siguen siendo campos
+    # obligatorios: omitirlos es un error, escribir `[]` no. Hasta #8 una lista vacia se
+    # rechazaba ("un proyecto sin analizadores no mide nada"); el criterio de #8 lo cambia,
+    # porque `analyzers: []` con `sinks: []` es el modo con el que se mide el rendimiento
+    # del encadenado completo antes de que existan #9, #10 y #11, y sin el no hay manera de
+    # correr `cvp run` mientras no haya ni un analizador implementado. Lo que se pierde —un
+    # `sinks: []` colado por descuido, que tira los datos a la basura en silencio— lo cubre
+    # el runner, que avisa con un WARNING al arrancar en vez de callarse.
     analyzers: list[AnalyzerConfig]
     sinks: list[SinkConfig]
     config_path: Path
@@ -718,24 +726,6 @@ class ProjectConfig(_ModeloBase):
     def _nombre_no_vacio(cls, valor: str) -> str:
         if not valor.strip():
             raise ValueError("no puede estar vacío: es lo que se ve en el dashboard")
-        return valor
-
-    @field_validator("analyzers")
-    @classmethod
-    def _hay_analizadores(cls, valor: list[Any]) -> list[Any]:
-        if not valor:
-            raise ValueError(
-                "no puede ser una lista vacía: un proyecto sin analizadores no mide nada"
-            )
-        return valor
-
-    @field_validator("sinks")
-    @classmethod
-    def _hay_sinks(cls, valor: list[Any]) -> list[Any]:
-        if not valor:
-            raise ValueError(
-                "no puede ser una lista vacía: un proyecto sin sinks tira el resultado a la basura"
-            )
         return valor
 
 
