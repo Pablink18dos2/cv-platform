@@ -67,8 +67,11 @@ Implementaciones: `yolo` (ultralytics), y más adelante `openvino_yolo`, `rtdetr
   `confidence`). Nada del formato de ultralytics sale de este bloque: es lo que permite cambiar
   de modelo sin tocar los analizadores.
 - El `roi` opcional sale de [rendimiento.md](rendimiento.md): recortar la región útil e inferir a
-  640 detecta más vehículos en ella que el fotograma completo a 1280, y a menos de la mitad de
-  coste (5,6 fps frente a 2,7 fps). El `roi` va en píxeles del fotograma original, `roi=None` es
+  640 detecta prácticamente lo mismo que el fotograma completo a 960 (20,2 vehículos por
+  fotograma frente a 20,4) con un 63 % más de fps (6,5 frente a 4,0). No detecta más que el
+  fotograma completo a 1280 —eso lo afirmó el spike inicial y la medición controlada lo
+  desmintió— pero 1280 va a 1,9 fps, demasiado lento para el tracker. El `roi` va en píxeles
+  del fotograma original, `roi=None` es
   el fotograma completo, y las `Detection` vuelven **siempre** en coordenadas del fotograma
   original: quien recorta, traduce de vuelta. Es un argumento por llamada y no estado del
   detector, para que dos analizadores puedan pedir regiones distintas del mismo fotograma.

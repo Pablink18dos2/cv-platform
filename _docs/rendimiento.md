@@ -26,6 +26,10 @@ Reproducible con `uv run python scripts/spike_yolo_perf.py`.
 | 640 | 177 ms | 360 ms | **5,6** | 21,3 |
 | 960 | 285 ms | 455 ms | 3,5 | 25,1 |
 
+> ⚠️ **La conclusión 2 de esta sección resultó ser falsa.** La medición controlada de más
+> abajo, hecha sobre los mismos fotogramas, la corrige. Se conserva el texto original a
+> propósito: es el ejemplo de por qué la salvedad de método del final no era una formalidad.
+
 ## Qué se concluye
 
 **1. El primer plano ya está saturado a 640.** Subir el tamaño de inferencia casi no aporta
@@ -67,3 +71,72 @@ ruido de muestreo, pero el número exacto no es de fiar.
 
 Se arregla en el issue 6: guardar un clip corto como fixture y medir todas las
 configuraciones sobre los mismos fotogramas.
+
+
+---
+
+# Medición controlada (issue #6)
+
+La tabla de arriba comparaba capturas tomadas en momentos distintos del directo, con tráfico
+distinto. Esta compara **exactamente los mismos 60 fotogramas** del fixture
+`tests/fixtures/video/calle-1080p-6s.mp4`, así que las diferencias son atribuibles a la
+configuración y no al azar de qué pasaba por la calle.
+
+Reproducible con `uv run python scripts/benchmark_detector.py`. Misma máquina, YOLO11n,
+`conf=0.3`, clases de vehículo. La región de interés es `BBox(288, 302, 1920, 1080)`: la escena
+sin el cielo, sin las fachadas y sin el fondo lejano.
+
+| configuración | mediana | p95 | fps | vehículos/fotograma |
+|---|---|---|---|---|
+| completo 640 | 136 ms | 386 ms | 7,3 | 16,4 |
+| completo 960 | 250 ms | 481 ms | 4,0 | 20,4 |
+| completo 1280 | 515 ms | 896 ms | 1,9 | 26,8 |
+| **roi 640** | **153 ms** | 915 ms | **6,5** | **20,2** |
+| roi 960 | 284 ms | 574 ms | 3,5 | 21,3 |
+
+## Lo que cambia respecto al spike
+
+**El spike afirmaba que recortar a 640 detecta más vehículos que el fotograma completo a 1280.
+Es falso.** Medido sobre los mismos fotogramas, 1280 detecta 26,8 por fotograma y el recorte a
+640 detecta 20,2: un 33 % más, no menos.
+
+El error tenía una causa concreta y vale la pena entenderla. El recorte excluye el fondo lejano,
+que es justo donde el 1280 encuentra la mayor parte de sus detecciones extra. El spike comparó
+el total del recorte contra el total del fotograma completo **menos** su franja de fondo, y
+además lo hizo sobre muestras distintas. Dos aproximaciones que iban en la misma dirección.
+
+Hay también una razón geométrica que el spike no tuvo en cuenta: inferir a `imgsz` reduce el
+lado largo a ese tamaño. El fotograma completo a 1280 reduce 1920→1280, un factor de 1,5. El
+recorte a 640 reduce 1632→640, un factor de 2,55. **El recorte a 640 tiene peor resolución
+efectiva que el fotograma completo a 1280**, así que era esperable que detectara menos. La
+intuición de "recortar concentra la resolución" solo se sostiene comparando contra el mismo
+`imgsz`.
+
+## Lo que sí se sostiene, y es lo que decide la configuración
+
+Comparando a igualdad de `imgsz`, recortar **sí** gana, aunque menos de lo que decía el spike:
+
+- **roi 640 frente a completo 640**: 20,2 vehículos frente a 16,4, un **23 % más**, por un 12 %
+  más de coste (153 ms frente a 136 ms). Sale a cuenta.
+- **roi 640 frente a completo 960**: prácticamente el **mismo número de vehículos** (20,2 frente
+  a 20,4) con un **63 % más de fps** (6,5 frente a 4,0). Este es el argumento bueno para el ROI:
+  no detecta más que agrandar, detecta **lo mismo mucho más rápido**.
+- **completo 1280 queda descartado por otra razón**: detecta más, pero a 1,9 fps. El analizador
+  de tráfico necesita unos 5 fps para que el tracker asocie identidades, así que 1280 no es una
+  opción por mucho que vea mejor.
+
+**Configuración elegida para el proyecto 01: `imgsz: 640` con el ROI.** 6,5 fps deja margen
+sobre los 5 que necesita el tracker, con la misma capacidad de detección que 960 a pantalla
+completa.
+
+## Dos avisos que siguen en pie
+
+**El jitter empeora con el ROI.** El p95 de `roi 640` es de 915 ms frente a una mediana de
+153 ms: un factor de seis. Es el peor de la tabla. Refuerza, otra vez, que el pipeline tiene que
+descartar fotogramas y no encolarlos.
+
+**El desglose por tipo de vehículo no es fiable en esta escena.** La clase `bus` de COCO **no
+aparece ni una vez** en ninguna configuración, pese a que en la escena hay autobuses urbanos. Y
+los `truck` bailan sin sentido según la configuración: 85, 57, 15, 220, 21 sobre los mismos 60
+fotogramas. El conteo **total** de vehículos es estable y utilizable; cualquier desglose por
+tipo no lo es, y no debe aparecer en el dashboard sin un aviso.
