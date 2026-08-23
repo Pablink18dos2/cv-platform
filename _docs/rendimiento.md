@@ -140,3 +140,42 @@ aparece ni una vez** en ninguna configuración, pese a que en la escena hay auto
 los `truck` bailan sin sentido según la configuración: 85, 57, 15, 220, 21 sobre los mismos 60
 fotogramas. El conteo **total** de vehículos es estable y utilizable; cualquier desglose por
 tipo no lo es, y no debe aparecer en el dashboard sin un aviso.
+
+
+---
+
+# Tracking: el umbral de activación por defecto pierde el 40 % (issue #7)
+
+Medido sobre 30 fotogramas del fixture de 1080p a `target_fps: 5`, con el detector a
+`imgsz: 640` y `conf: 0.35`. 419 detecciones en total.
+
+**La confianza de esta escena es baja**: mínimo 0,35, **mediana 0,62**, máximo 0,85. Solo el
+**33 %** de las detecciones llega a 0,7.
+
+Eso choca de frente con el `track_activation_threshold` por defecto de ByteTrack, que es
+justamente 0,7: una detección por debajo de ese valor nunca llega a iniciar un track.
+
+| `track_activation_threshold` | identidades distintas | vehículos seguidos por fotograma |
+|---|---|---|
+| **0,7** (por defecto) | 7 | 5,4 |
+| 0,5 | 10 | 8,8 |
+| 0,4 | 10 | 8,8 |
+| 0,35 | 10 | 8,8 |
+
+Con el valor por defecto se siguen **5,4 vehículos por fotograma de los ~14 que el detector
+ve**. Bajando a 0,5 se siguen 8,8, un 63 % más, y **por debajo de 0,5 no se gana nada más**:
+hay meseta, no una pendiente en la que cada bajada compre un poco de ruido.
+
+## Qué se hace con esto
+
+El valor por defecto del esquema **se deja en 0,7**, que es el de la librería: afinar umbrales
+para esta escena es trabajo del issue #14, con el vídeo delante y viendo los ids dibujados. Lo
+que no se puede hacer es dejar el dato sin escribir, porque un `parking_occupancy` construido
+sobre 5,4 de 14 vehículos daría una ocupación sistemáticamente baja y nadie sabría por qué.
+
+Dos consecuencias para más adelante:
+
+- **#14 debería empezar por 0,5**, no por el defecto.
+- **#11 (aparcamiento) debería plantearse si necesita tracks o le bastan las detecciones.** Una
+  plaza ocupada lo está aunque el coche no tenga identidad confirmada, y el tracking es un
+  filtro que aquí solo resta. El conteo de tráfico de #10 sí los necesita.

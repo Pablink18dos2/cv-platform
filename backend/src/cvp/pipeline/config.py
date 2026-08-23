@@ -484,13 +484,18 @@ class YoloDetector(_ModeloBase):
 
 
 class ByteTrackTracker(_ModeloBase):
-    """ByteTrack, sin campos obligatorios en el MVP.
+    """ByteTrack.
 
-    El modelo existe igualmente: sin el, `extra="forbid"` no podria rechazar un campo
-    inventado bajo `tracker:` y no habria donde anadir los suyos al implementarlo.
+    `frame_rate` **no esta aqui a proposito**: no es una decision del bloque `tracker`, es
+    el `target_fps` de la fuente. Lo pasa el runner, que conoce los dos. Escribirlo dos
+    veces en el YAML seria una forma segura de que acabaran discrepando.
     """
 
     type: Literal["bytetrack"]
+    lost_track_buffer: Annotated[int, Field(ge=1, le=300)] = 30
+    track_activation_threshold: _Confianza = 0.7
+    minimum_consecutive_frames: Annotated[int, Field(ge=1, le=10)] = 2
+    minimum_iou_threshold: _Confianza = 0.1
 
 
 # --------------------------------------------------------------------------------------
