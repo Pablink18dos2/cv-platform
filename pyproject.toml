@@ -9,6 +9,10 @@ dependencies = [
     # aqui en vez de seguir entrando de forma transitiva por ultralytics: el core tiene
     # que poder instalarse sin el detector y seguir funcionando.
     "numpy>=2.1",
+    # `cvp.sources` importa cv2 directamente para decodificar. Mismo criterio: entraba de
+    # forma transitiva por ultralytics, pero un connector de video tiene que poder
+    # instalarse sin el detector.
+    "opencv-python>=4.10",
     # `cvp.pipeline.config` importa los dos directamente: Pydantic v2 valida el esquema
     # (ya decidido en `_docs/plan.md`) y PyYAML lee el fichero. `pyyaml` entraba de forma
     # transitiva por ultralytics; se declara por el mismo criterio que numpy, porque el
