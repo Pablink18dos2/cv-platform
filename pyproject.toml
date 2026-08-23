@@ -9,6 +9,12 @@ dependencies = [
     # aqui en vez de seguir entrando de forma transitiva por ultralytics: el core tiene
     # que poder instalarse sin el detector y seguir funcionando.
     "numpy>=2.1",
+    # `cvp.pipeline.config` importa los dos directamente: Pydantic v2 valida el esquema
+    # (ya decidido en `_docs/plan.md`) y PyYAML lee el fichero. `pyyaml` entraba de forma
+    # transitiva por ultralytics; se declara por el mismo criterio que numpy, porque el
+    # dia que ultralytics deje de traerlo la configuracion tiene que seguir cargando.
+    "pydantic>=2.9",
+    "pyyaml>=6.0",
     "ultralytics>=8.3",
     "yt-dlp>=2026.8.19",
 ]
