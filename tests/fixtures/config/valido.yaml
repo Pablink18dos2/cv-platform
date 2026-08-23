@@ -1,0 +1,40 @@
+# El project.yaml que si esta bien. Es la referencia de los demas fixtures y el que
+# usan el test de aislamiento y la comprobacion manual de `cvp validate`.
+id: valido
+name: Fixture válido de configuración
+
+source:
+  type: youtube_live
+  url: https://www.youtube.com/watch?v=EPKWu223XEg
+  format: "96"
+  target_fps: 5
+  refresh_url_every_s: 18000
+  reconnect: { max_retries: 20, backoff_s: [1, 2, 5, 15, 30, 60] }
+
+detector:
+  type: yolo
+  weights: yolo11n.pt
+  imgsz: 640
+  conf: 0.35
+  classes: [car, motorcycle, bus, truck]
+  # Toda la geometria va en fracciones 0-1 del fotograma, nunca en pixeles.
+  roi: [0.0, 0.33, 1.0, 1.0]
+
+tracker:
+  type: bytetrack
+
+analyzers:
+  - type: traffic_flow
+    every_n_frames: 1
+    lines:
+      - { id: principal, p1: [0.06, 0.59], p2: [0.61, 0.56], positive_direction: norte }
+  - type: parking_occupancy
+    every_n_frames: 10
+    zones_file: zones.json
+    occupied_iou: 0.35
+    hysteresis: { to_occupied_s: 6, to_free_s: 10 }
+
+sinks:
+  - { type: sqlite }
+  - { type: preview, max_frames: 2 }
+  - { type: jsonl, path: eventos.jsonl }

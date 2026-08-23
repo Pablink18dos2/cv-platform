@@ -1,0 +1,23 @@
+id: minimo
+name: Fixture mínimo
+
+source:
+  type: youtube_live
+  url: https://www.youtube.com/watch?v=EPKWu223XEg
+  target_fps: 5
+  refresh_url_every_s: 30000
+
+detector:
+  type: yolo
+  classes: [car, truck]
+
+tracker:
+  type: bytetrack
+
+analyzers:
+  - type: traffic_flow
+    lines:
+      - { id: principal, p1: [0.06, 0.59], p2: [0.61, 0.56], positive_direction: norte }
+
+sinks:
+  - { type: sqlite }

@@ -1,0 +1,20 @@
+id: minimo
+name: Fixture mínimo
+
+source:
+  type: webcam
+  target_fps: 5
+
+detector:
+  type: yolo
+  classes: [car, truck]
+
+tracker:
+  type: bytetrack
+
+analyzers:
+  - type: parking_occupancy
+    zones_file: no-existe.json
+
+sinks:
+  - { type: sqlite }

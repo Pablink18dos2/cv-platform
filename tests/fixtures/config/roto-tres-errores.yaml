@@ -1,0 +1,28 @@
+# Tres errores a proposito, uno por bloque, para comprobar que salen los tres de una
+# sola pasada y ordenados por ruta de campo.
+id: roto-tres-errores
+name: Tres errores de una vez
+
+source:
+  type: youtube_live
+  url: https://www.youtube.com/watch?v=EPKWu223XEg
+  target_fps: -1.0
+
+detector:
+  type: yolo
+  conf: 1.4
+  classes: [car]
+
+tracker:
+  type: bytetrack
+
+analyzers:
+  - type: traffic_flow
+    lines:
+      - { id: principal, p1: [0.06, 0.59], p2: [0.61, 0.56], positive_direction: norte }
+  - type: parking_occupancy
+    zones_file: zones.json
+    hysteresis: { to_occupied_s: 6 }
+
+sinks:
+  - { type: sqlite }

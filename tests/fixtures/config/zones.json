@@ -1,0 +1,6 @@
+{
+  "comment": "Los poligonos van en fracciones 0-1 del fotograma, igual que el resto de la geometria del proyecto. Su esquema y su lectura son de otra tarea; aqui solo se comprueba que el fichero existe.",
+  "spaces": [
+    { "id": "d1", "polygon": [[0.62, 0.71], [0.71, 0.70], [0.72, 0.78], [0.62, 0.79]] }
+  ]
+}

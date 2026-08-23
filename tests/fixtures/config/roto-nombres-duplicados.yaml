@@ -1,0 +1,25 @@
+id: minimo
+name: Fixture mínimo
+
+source:
+  type: webcam
+  target_fps: 5
+
+detector:
+  type: yolo
+  classes: [car, truck]
+
+tracker:
+  type: bytetrack
+
+analyzers:
+  - type: traffic_flow
+    name: flujo
+    lines:
+      - { id: principal, p1: [0.06, 0.59], p2: [0.61, 0.56], positive_direction: norte }
+  - type: parking_occupancy
+    name: flujo
+    zones_file: zones.json
+
+sinks:
+  - { type: sqlite }
