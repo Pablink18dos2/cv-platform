@@ -1,22 +1,34 @@
-"""El unico error que sale de la carga de configuracion.
+"""Los errores del pipeline: la carga de configuracion y la ejecucion.
 
-Vive aparte de `config.py` por el mismo motivo que `cvp.core.errors` vive aparte de
-`registry.py`: quien lo captura (el CLI, el runner) no tiene por que importar Pydantic ni
-el modulo de esquemas entero solo para escribir un `except`.
-
-Es subclase de `ValueError` como las dos excepciones de `cvp.core`: un `project.yaml` mal
-escrito es un valor invalido, y quien ya captura `ValueError` no necesita cambiar nada.
+Viven aparte de `config.py` y de `runner.py` por el mismo motivo que `cvp.core.errors`
+vive aparte de `registry.py`: quien los captura (el CLI, el runner) no tiene por que
+importar Pydantic, ni OpenCV, ni el modulo de esquemas entero solo para escribir un
+`except`. Este modulo no importa nada mas que la biblioteca estandar.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable
 
-__all__ = ["ConfigError"]
+__all__ = ["ConfigError", "PipelineError"]
+
+
+class PipelineError(RuntimeError):
+    """El pipeline no ha podido arrancar o no ha podido seguir.
+
+    Es de ejecucion, no de configuracion: el YAML estaba bien y aun asi la fuente no
+    contesta, o la clase registrada no sabe construirse desde su configuracion. Por eso es
+    un `RuntimeError` y no un `ValueError`, y por eso el CLI le da un codigo de salida
+    distinto al de un `project.yaml` mal escrito: no se arregla editando el fichero.
+    """
 
 
 class ConfigError(ValueError):
     """La configuracion de un proyecto no es valida, con **todos** los motivos.
+
+    Es subclase de `ValueError` como las dos excepciones de `cvp.core`: un `project.yaml`
+    mal escrito es un valor invalido, y quien ya captura `ValueError` no necesita cambiar
+    nada.
 
     El texto lo lee una persona a las cuatro de la manana, asi que tiene una forma fija:
     una cabecera con la ruta del fichero tal y como se pidio y cuantos errores hay, y
