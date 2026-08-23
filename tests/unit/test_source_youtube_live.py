@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 import re
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -268,12 +268,16 @@ def fuente(
     target_fps: float = 1000.0,
     reloj: RelojFalso | None = None,
     resolvedor: Resolvedor | None = None,
+    sleeper: Callable[[float], object] | None = None,
     **extra: Any,
 ) -> YouTubeLiveSource:
     """Una fuente con los cuatro puntos de inyeccion puestos: ni red, ni OpenCV, ni esperas.
 
     `target_fps` alto por defecto para que el paceo no estorbe en los tests que no van de
     paceo; el que va de paceo lo baja.
+
+    El `sleeper` por defecto adelanta el reloj, que es lo que quiere casi todo el fichero.
+    Lo cambia quien necesite un reloj que **no se mueva en absoluto**.
     """
     reloj = reloj if reloj is not None else RelojFalso()
     return YouTubeLiveSource(
@@ -282,7 +286,7 @@ def fuente(
         resolver=resolvedor if resolvedor is not None else Resolvedor(),
         capture_factory=fabrica,
         clock=reloj,
-        sleeper=reloj.dormir,
+        sleeper=sleeper if sleeper is not None else reloj.dormir,
         **extra,
     )
 
@@ -748,15 +752,20 @@ def test_el_timestamp_es_el_instante_de_lectura_y_no_el_de_emision() -> None:
     assert fotograma.timestamp == INICIO
 
 
-def test_los_timestamps_crecen_aunque_el_reloj_no_avance() -> None:
-    # Un reloj congelado es el caso extremo de dos cosas reales: un reloj de baja
-    # resolucion y un NTP que echa la hora atras en un proceso que lleva dias vivo.
+def test_los_timestamps_crecen_aunque_el_reloj_no_avance_ni_un_microsegundo() -> None:
+    # Un reloj parado es el caso extremo de dos cosas reales: un reloj de baja resolucion
+    # y un NTP que echa la hora atras en un proceso que lleva dias vivo. Aqui no lo mueve
+    # nada, tampoco el `sleeper` del paceo: si lo moviera, el test pasaria igual sin la
+    # defensa y estaria dando una confianza que no ha ganado.
+    reloj = RelojFalso()
     captura = CapturaFalsa()
-    with abierta(fuente(Fabrica(captura)), captura) as origen:
+    origen = fuente(Fabrica(captura), reloj=reloj, sleeper=lambda _segundos: None)
+    with abierta(origen, captura):
         marcas = [f.timestamp for _, f in zip(range(5), origen.frames(), strict=False)]
-    assert marcas == sorted(marcas)
-    assert len(set(marcas)) == 5
-    assert all(marca.tzinfo is not None for marca in marcas)
+    assert reloj.ahora == INICIO, "el reloj se ha movido: este test ya no prueba lo que dice"
+    # Las cinco lecturas ocurrieron en el mismo instante y aun asi salen separadas.
+    assert marcas == [INICIO + timedelta(microseconds=n) for n in range(5)]
+    assert all(marca.utcoffset() == timedelta(0) for marca in marcas)
 
 
 def test_las_imagenes_salen_tal_cual_las_entrego_la_captura() -> None:
