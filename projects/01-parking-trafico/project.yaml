@@ -1,0 +1,43 @@
+# Proyecto 01: parking y tráfico sobre el directo de Collingwood.
+#
+# **Provisional.** Este fichero existe para poder medir el encadenado completo (#8) contra
+# el directo real. Las líneas de conteo, las zonas de aparcamiento y los umbrales afinados
+# son de #14, con el vídeo delante.
+#
+# `analyzers` y `sinks` están vacíos a propósito: los analizadores (#10, #11) y los sinks
+# (#9) todavía no existen, y un `type:` sin implementación registrada haría fallar el
+# arranque. Con las dos listas vacías corren fuente, detector y tracker, que es exactamente
+# lo que hay que cronometrar.
+
+id: 01-parking-trafico
+name: Parking y tráfico (Collingwood)
+
+source:
+  type: youtube_live
+  url: https://www.youtube.com/watch?v=EPKWu223XEg
+  # El 96 es 1080p30. Bajar de ahí hace indetectables los coches del fondo
+  # (projects/01-parking-trafico/fuente.md).
+  format: "96"
+  target_fps: 5
+  # 5 h: la URL HLS caduca a las 6 h exactas y re-resolverla antes evita el hueco de datos.
+  refresh_url_every_s: 18000
+  reconnect: { max_retries: 20, backoff_s: [1, 2, 5, 15, 30, 60] }
+
+detector:
+  type: yolo
+  weights: yolo11n.pt
+  # 640 con ROI: misma capacidad de detección que 960 a pantalla completa y un 63 % más de
+  # fps (_docs/rendimiento.md, medición controlada de #6).
+  imgsz: 640
+  conf: 0.35
+  classes: [car, motorcycle, bus, truck]
+  # La escena sin el cielo, sin las fachadas y sin el fondo lejano. Es el mismo recorte que
+  # el del benchmark (BBox(288, 302, 1920, 1080) sobre 1920x1080), en fracciones.
+  roi: [0.15, 0.28, 1.0, 1.0]
+
+tracker:
+  type: bytetrack
+
+analyzers: []
+
+sinks: []

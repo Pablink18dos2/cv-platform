@@ -179,3 +179,106 @@ Dos consecuencias para más adelante:
 - **#11 (aparcamiento) debería plantearse si necesita tracks o le bastan las detecciones.** Una
   plaza ocupada lo está aunque el coche no tenga identidad confirmada, y el tracking es un
   filtro que aquí solo resta. El conteo de tráfico de #10 sí los necesita.
+
+---
+
+# El encadenado completo contra el directo (issue #8)
+
+Hasta aquí todo estaba medido **por piezas**: el detector solo, sobre fotogramas ya capturados
+en memoria. Esta es la primera medida del pipeline entero —fuente, detector y tracker a la vez—
+contra el directo real, que es lo que dice si el presupuesto del plan se sostiene.
+
+Reproducible con:
+
+```
+uv run cvp run projects/01-parking-trafico --duration 220 --health-every 30
+```
+
+Misma máquina (i7-1365U, 15 W, sin CUDA). `format: "96"` (1080p30), `imgsz: 640` con el ROI
+`[0.15, 0.28, 1.0, 1.0]`, `conf: 0.35`, `target_fps: 5`, `analyzers: []` y `sinks: []`.
+
+```
+ejecucion 20260823T213721Z-b6b1ec43
+  duracion total:  220.1 s (arranque 9.8 s + bucle 210.3 s)
+  fotogramas:      178 (0.85 fps de salida)
+  espera fuente:   p50 209.1 ms, p95 3314.3 ms, media 829.5 ms (178 fotogramas)
+  detector:        p50 220.7 ms, p95 860.7 ms, media 350.5 ms (178 llamadas)
+  tracker:         p50 1.5 ms, p95 2.5 ms, media 1.6 ms (178 llamadas)
+  analizadores:    ninguno
+  sinks:           0 escrituras, 0 errores
+  reintentos de arranque: 0
+```
+
+Dos ejecuciones de 220 s dieron **0,85 fps las dos**, con **cero reconexiones** y cero
+renovaciones de URL. El arranque (resolver la URL con yt-dlp, cargar los pesos y calentar el
+modelo) cuesta entre 10 y 13 s y se paga una vez; por eso va aparte y no se cuenta en los fps.
+
+## El presupuesto del plan **no se sostiene**, y no es culpa del modelo
+
+El plan asume ~5 fps para el tracker de tráfico y ~0,5 fps para el aparcamiento. El encadenado
+da **0,85 fps**: seis veces menos de lo que necesita el conteo de tráfico. Con eso, el
+aparcamiento (`every_n_frames: 10`) mediría una vez cada 12 s, que probablemente le vale, pero
+el tracker de #10 no puede asociar identidades a ese ritmo.
+
+**El detector no es el cuello de botella.** Su mediana dentro del encadenado es de 220 ms —da
+para 4,5 fps— y el tracker cuesta 1,5 ms, que es ruido. Lo que se lleva el tiempo es **esperar
+a que la fuente entregue el siguiente fotograma**: mediana 209 ms, pero media 830 ms y p95 3,3 s.
+
+## Por qué espera: el directo llega a ráfagas y el consumidor solo muestrea dentro de ellas
+
+Medido con el connector **solo**, sin detector y sin nada más compitiendo por la CPU, durante
+60 s (`format: "96"`, `target_fps: 5`):
+
+| | valor |
+|---|---|
+| fotogramas emitidos al consumidor | 94 = **1,55 fps** |
+| fotogramas decodificados por el hilo lector | 2089 = **34,4 fps** |
+| espera del consumidor, p50 | 207 ms |
+| espera del consumidor, p95 | 3964 ms |
+| esperas de más de 1 s | 11 de 94, y suman **43,3 s de los 60,7 s** |
+| fotogramas publicados durante cada espera | 1, 31, 22, 23, 31, 30, 1, 15, 31, 28, ... |
+
+El hilo lector va sobrado: decodifica los 30 fps del directo sin despeinarse. Lo que pasa es
+que **no los entrega repartidos en el tiempo**. Los publica a ráfagas: ~28 fotogramas en los
+200 ms de una espera (unos 135 fps, o sea un segmento HLS entero decodificado de golpe) y
+después nada durante ~4 s, hasta que YouTube publica el siguiente segmento.
+
+El consumidor de `cvp/sources/live.py` pide **un fotograma más nuevo que el último que vio** y
+se pacea contra el reloj de pared. Dentro de una ráfaga eso funciona: coge uno cada 200 ms.
+Entre ráfagas se queda bloqueado, porque no hay ninguno más nuevo. Resultado: solo muestrea
+durante la ráfaga, y el 71 % del tiempo está esperando.
+
+Bajar la resolución **empeora** el número, lo que confirma el diagnóstico: con `format: "93"`
+(360p) el consumidor recibe 0,42 fps, porque la ráfaga se decodifica aún más rápido y caben
+menos ranuras de 200 ms dentro de ella.
+
+## Dos consecuencias que hay que arreglar en el connector, no en el runner
+
+**1. El muestreo se pacea contra el reloj de pared y debería pacearse contra el vídeo.**
+`target_fps: 5` sobre una fuente de 30 fps debería significar "uno de cada seis fotogramas
+decodificados", que es un muestreo uniforme del vídeo. Paceado contra el reloj, sobre un
+transporte a ráfagas, significa "los que caigan mientras dure la ráfaga".
+
+**2. Los `timestamp` de los fotogramas están comprimidos.** `Frame.timestamp` es el instante en
+que el hilo lector **leyó** el fotograma, y dentro de una ráfaga se leen 5 s de vídeo en ~1 s.
+Los fotogramas que ve el analizador están separados ~200 ms de reloj pero ~900 ms de vídeo, y
+después hay un salto de 4 s. Cualquier agregación por minuto, cualquier "vehículos por minuto"
+y cualquier histéresis temporal construidos sobre esos timestamps saldrán deformados.
+
+Hay además un detalle menor y barato en el mismo sitio: `_emitir` calcula la siguiente ranura
+de paceo **después** de que el consumidor devuelva el control, así que suma los 200 ms del
+periodo al tiempo de proceso en vez de solaparlos. Son ~200 ms por fotograma regalados.
+
+Los tres son de `cvp/sources/live.py` (#5), que #8 tiene prohibido tocar. Van anotados en el
+issue 8 para que salga la tarea correspondiente.
+
+## Lo que sí se sostiene
+
+- **`imgsz: 640` con ROI sigue siendo la configuración correcta.** Dentro del encadenado su
+  mediana es de 220 ms (4,5 fps) frente a los 153 ms del banco de pruebas; el 44 % de más es
+  competir por la CPU con el hilo que decodifica el directo.
+- **El tracker es gratis**: 1,5 ms de mediana, tres órdenes de magnitud por debajo del detector.
+  La decisión de #7 no tiene coste medible.
+- **El jitter sigue siendo el de siempre**: p95 del detector 861 ms contra una mediana de
+  221 ms, un factor de cuatro. Descartar fotogramas en vez de encolarlos sigue siendo correcto.
+- **La fuente aguantó 2 x 220 s sin una sola reconexión** y sin renovar la URL.
