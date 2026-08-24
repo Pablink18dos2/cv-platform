@@ -40,6 +40,16 @@ _log = logging.getLogger(__name__)
 # colgada dejaria al hilo lector mudo para siempre sin que nada lo delatara.
 TIEMPO_DE_ESPERA_MS = 15000
 
+# Cuantos hilos se le dan a ffmpeg para descodificar. Por defecto coge uno por nucleo, y
+# en esta maquina (2 P-cores y 8 E-cores de 15 W) eso significa que el decodificador y el
+# detector se pelean por los mismos dos nucleos rapidos durante todo el rato: el detector
+# tenia p50 196 ms y **media 302 ms**, y es la media la que manda en los fps.
+#
+# Dos es suficiente con holgura: medido sobre un directo 1080p30, ffmpeg descodifica a
+# 42 fps con dos hilos frente a 49 fps sin limite, y solo hacen falta 30. Se cambia el
+# reparto de un recurso escaso por un margen de decodificacion que sigue sobrando.
+HILOS_DE_DECODIFICACION = 2
+
 
 def clientes_que_funcionan() -> dict[str, dict[str, list[str]]]:
     """Los `extractor_args` con los que este directo resuelve de verdad.
@@ -109,18 +119,26 @@ def _url_directa(info: object, url: str) -> str:
     raise SourceError(f"yt-dlp ha resuelto {url} pero no ha devuelto ninguna URL directa")
 
 
+def parametros_de_captura() -> list[int]:
+    """Los parametros con los que se abre la captura de verdad.
+
+    Estan aparte para que un test pueda afirmar sobre ellos: los tres son decisiones
+    medidas, no valores por defecto de OpenCV, y un cambio silencioso en cualquiera de
+    los tres se paga en produccion sin que nada lo delate.
+    """
+    return [
+        cv2.CAP_PROP_OPEN_TIMEOUT_MSEC,
+        TIEMPO_DE_ESPERA_MS,
+        cv2.CAP_PROP_READ_TIMEOUT_MSEC,
+        TIEMPO_DE_ESPERA_MS,
+        cv2.CAP_PROP_N_THREADS,
+        HILOS_DE_DECODIFICACION,
+    ]
+
+
 def _abrir_con_opencv(url: str) -> Any:
     """La captura de verdad. Es el valor por defecto y no lo usa ningun test."""
-    return cv2.VideoCapture(
-        url,
-        cv2.CAP_FFMPEG,
-        [
-            cv2.CAP_PROP_OPEN_TIMEOUT_MSEC,
-            TIEMPO_DE_ESPERA_MS,
-            cv2.CAP_PROP_READ_TIMEOUT_MSEC,
-            TIEMPO_DE_ESPERA_MS,
-        ],
-    )
+    return cv2.VideoCapture(url, cv2.CAP_FFMPEG, parametros_de_captura())
 
 
 @SOURCES.register("youtube_live")

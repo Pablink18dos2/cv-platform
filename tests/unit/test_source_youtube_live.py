@@ -34,7 +34,13 @@ from cvp.core.protocols import VideoSource
 from cvp.core.registry import SOURCES
 from cvp.sources import SourceError, YouTubeLiveSource
 from cvp.sources import youtube_live as modulo
-from cvp.sources.youtube_live import clientes_que_funcionan, resolver_con_ytdlp
+from cvp.sources.youtube_live import (
+    HILOS_DE_DECODIFICACION,
+    TIEMPO_DE_ESPERA_MS,
+    clientes_que_funcionan,
+    parametros_de_captura,
+    resolver_con_ytdlp,
+)
 
 URL = "https://www.youtube.com/watch?v=EPKWu223XEg"
 DIRECTA = "https://manifest.googlevideo.com/api/manifest/hls_playlist/expire/1755000000/x.m3u8"
@@ -754,6 +760,23 @@ def test_una_captura_que_no_abre_es_un_source_error_con_la_url() -> None:
 
     with pytest.raises(SourceError, match=re.escape(URL)):
         fuente(Fabrica(NoAbre())).open()
+
+
+def test_la_captura_de_verdad_lleva_timeouts_y_los_hilos_de_decodificacion_capados() -> None:
+    # Los tres son decisiones medidas y no valores por defecto de OpenCV. Sin timeout, una
+    # lectura colgada deja al hilo lector mudo para siempre sin que nada lo delate; sin el
+    # tope de hilos, ffmpeg coge uno por nucleo y le pelea al detector los dos P-cores de
+    # esta maquina, que es donde se iba la media del detector (`_docs/rendimiento.md`).
+    import cv2
+
+    parametros = parametros_de_captura()
+    esperado = {
+        cv2.CAP_PROP_OPEN_TIMEOUT_MSEC: TIEMPO_DE_ESPERA_MS,
+        cv2.CAP_PROP_READ_TIMEOUT_MSEC: TIEMPO_DE_ESPERA_MS,
+        cv2.CAP_PROP_N_THREADS: HILOS_DE_DECODIFICACION,
+    }
+    assert dict(zip(parametros[::2], parametros[1::2], strict=True)) == esperado
+    assert HILOS_DE_DECODIFICACION >= 1
 
 
 @pytest.mark.network
