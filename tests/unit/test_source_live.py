@@ -214,6 +214,110 @@ def test_ir_por_delante_del_reloj_avisa_una_sola_vez_y_no_retrocede(
     assert caplog.text.count("por delante del reloj") == 1
 
 
+# --- El muestreo se ajusta a lo que el consumidor sostiene -----------------------------
+
+
+def test_el_muestreo_baja_a_lo_que_el_consumidor_sostiene(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # El fallo que encontro QA: pidiendo 5 fps a una maquina que sostiene 3,75, se
+    # seleccionaban 5, el buffer se llenaba y el descarte caia en una tirada contigua de la
+    # cabeza. Huecos de 200 ms y de pronto uno de 1,2 s, con la mediana impecable.
+    linea, reloj = _linea(target_fps=5.0)
+    assert linea.realimentar(tomados=0, fondo=0) is True
+    _seleccionados(linea, 120)  # 4 s de video: 20 ofrecidos
+    reloj.avanzar(4)
+    with caplog.at_level(logging.INFO):
+        assert linea.realimentar(tomados=15, fondo=0) is True
+    assert linea.tasa_efectiva == pytest.approx(3.75)
+    assert "sostiene 3.75" in caplog.text
+
+
+def test_con_la_tasa_ajustada_los_huecos_salen_repartidos() -> None:
+    linea, reloj = _linea(target_fps=5.0)
+    linea.realimentar(tomados=0, fondo=0)
+    _seleccionados(linea, 120)
+    reloj.avanzar(4)
+    linea.realimentar(tomados=15, fondo=0)
+
+    marcas = [marca for _, marca in _seleccionados(linea, 300)]
+    huecos = [(b - a).total_seconds() for a, b in zip(marcas[:-1], marcas[1:], strict=True)]
+    # 3,75 fps sobre 30 nativos es uno de cada ocho: 266 ms de mediana, y lo peor que
+    # hace el cambio de tasa es estirar un hueco un fotograma. Nada que se parezca al
+    # 1,2 s de tirar un bloque entero.
+    assert sorted(huecos)[len(huecos) // 2] == pytest.approx(8 / 30, abs=1e-5)
+    assert max(huecos) <= 9 / 30
+
+
+def test_el_retraso_que_no_se_va_solo_se_descuenta_del_muestreo() -> None:
+    # Sin restar el valle del buffer, cada tanteo hacia arriba deja fotogramas de mas
+    # esperando y el retraso crece hasta desbordar: el bloque descartado de golpe vuelve
+    # por otro camino.
+    linea, reloj = _linea(target_fps=5.0)
+    linea.realimentar(tomados=0, fondo=0)
+    _seleccionados(linea, 120)
+    reloj.avanzar(4)
+    linea.realimentar(tomados=15, fondo=5)
+    # 3,75 de capacidad menos los cinco atascados, que hay que drenar en una ventana.
+    assert linea.tasa_efectiva == pytest.approx(2.5)
+
+
+def test_el_muestreo_vuelve_a_subir_cuando_el_consumidor_da_abasto() -> None:
+    linea, reloj = _linea(target_fps=5.0)
+    linea.realimentar(tomados=0, fondo=0)
+    _seleccionados(linea, 120)
+    reloj.avanzar(4)
+    linea.realimentar(tomados=15, fondo=0)
+    assert linea.tasa_efectiva == pytest.approx(3.75)
+
+    # Ahora se lleva los 15 que se le ofrecen y el buffer se queda vacio.
+    _seleccionados(linea, 120)
+    reloj.avanzar(4)
+    linea.realimentar(tomados=30, fondo=0)
+    assert linea.tasa_efectiva == pytest.approx(3.75 * 1.25)
+
+
+def test_el_muestreo_no_pasa_del_target_por_mucho_margen_que_haya() -> None:
+    linea, reloj = _linea(target_fps=5.0)
+    tomados = 0
+    for _ in range(6):
+        linea.realimentar(tomados=tomados, fondo=0)
+        tomados += len(_seleccionados(linea, 120))
+        reloj.avanzar(4)
+    linea.realimentar(tomados=tomados, fondo=0)
+    assert linea.tasa_efectiva == 5.0
+
+
+def test_una_ventana_sin_consumo_no_cuenta() -> None:
+    # Es la del arranque, mientras el detector carga los pesos y calienta. Ajustar ahi
+    # dejaria el muestreo en el suelo y tardaria un minuto en recuperarse.
+    linea, reloj = _linea(target_fps=5.0)
+    linea.realimentar(tomados=0, fondo=0)
+    _seleccionados(linea, 300)
+    reloj.avanzar(10)
+    linea.realimentar(tomados=0, fondo=0)
+    assert linea.tasa_efectiva == 5.0
+
+
+def test_el_muestreo_no_baja_del_suelo_aunque_el_consumidor_se_atasque() -> None:
+    linea, reloj = _linea(target_fps=5.0)
+    linea.realimentar(tomados=0, fondo=0)
+    _seleccionados(linea, 120)
+    reloj.avanzar(4)
+    linea.realimentar(tomados=1, fondo=20)
+    # 0,25 fps de capacidad menos 5 de drenaje daria negativo: se queda en el suelo.
+    assert linea.tasa_efectiva == pytest.approx(0.5)
+
+
+def test_antes_de_que_pase_la_ventana_no_se_ajusta_nada() -> None:
+    linea, reloj = _linea(target_fps=5.0)
+    linea.realimentar(tomados=0, fondo=0)
+    _seleccionados(linea, 60)
+    reloj.avanzar(2)
+    assert linea.realimentar(tomados=1, fondo=9) is False
+    assert linea.tasa_efectiva == 5.0
+
+
 # --- `native_fps` desconocido ---------------------------------------------------------
 
 
@@ -270,33 +374,71 @@ def test_una_linea_de_tiempo_imposible_falla_al_construir(
 
 
 def test_el_buffer_entrega_en_orden_y_no_repite() -> None:
-    buffer = RecentFrameBuffer(4)
+    buffer = RecentFrameBuffer(4.0)
     for numero in range(1, 4):
         buffer.publicar(_imagen(numero), INICIO + timedelta(seconds=numero))
     assert [buffer.tomar(timeout=0).image[0, 0, 0] for _ in range(3)] == [1, 2, 3]  # type: ignore[union-attr]
     assert buffer.tomar(timeout=0) is None
 
 
-def test_el_buffer_descarta_el_mas_antiguo_al_desbordar() -> None:
-    # Es lo que mantiene el retraso acotado: con hueco para 3, el analisis nunca puede ir
-    # mas de 3 fotogramas por detras del directo, por lento que vaya.
-    buffer = RecentFrameBuffer(3)
+def test_el_buffer_descarta_lo_mas_viejo_para_no_pasar_de_su_ventana() -> None:
+    # Es lo que mantiene el retraso acotado: con una ventana de 0,6 s, el analisis nunca
+    # puede ir mas de 0,6 s de video por detras del directo, por lento que vaya.
+    buffer = RecentFrameBuffer(0.6)
     descartes = [
-        buffer.publicar(_imagen(numero), INICIO + timedelta(seconds=numero))
-        for numero in range(1, 7)
+        buffer.publicar(_imagen(numero), INICIO + timedelta(seconds=0.2 * numero))
+        for numero in range(6)
     ]
-    assert descartes == [False, False, False, True, True, True]
-    assert buffer.descartados == 3
-    assert len(buffer) == 3
-    assert [buffer.tomar(timeout=0).image[0, 0, 0] for _ in range(3)] == [4, 5, 6]  # type: ignore[union-attr]
+    assert descartes == [False, False, False, False, True, True]
+    assert buffer.descartados == 2
+    assert len(buffer) == 4
+    assert [buffer.tomar(timeout=0).image[0, 0, 0] for _ in range(4)] == [2, 3, 4, 5]  # type: ignore[union-attr]
+
+
+def test_la_ventana_del_buffer_no_depende_de_cuantos_fotogramas_quepan() -> None:
+    # El tope se declaraba en fotogramas (`max_backlog_s * target_fps`) y se cobraba en
+    # tiempo, que solo coincide mientras la separacion sea la que se supone: con una fuente
+    # que declara 1 fps y `target_fps: 5`, un tope que se creia de 4 s era de 19 s. Es el
+    # caso de RTSP y webcam, donde 1-5 fps nativos son normales.
+    buffer = RecentFrameBuffer(4.0)
+    for numero in range(40):
+        buffer.publicar(_imagen(numero), INICIO + timedelta(seconds=numero))
+    primero = buffer.tomar(timeout=0)
+    assert primero is not None
+    assert INICIO + timedelta(seconds=39) - primero.timestamp <= timedelta(seconds=4)
+
+
+def test_el_buffer_cuenta_lo_que_se_lleva_el_analisis() -> None:
+    # Es la medida con la que se decide si el muestreo va por delante del consumidor.
+    buffer = RecentFrameBuffer(4.0)
+    for numero in range(3):
+        buffer.publicar(_imagen(numero), INICIO + timedelta(seconds=0.2 * numero))
+    assert buffer.tomados == 0
+    buffer.tomar(timeout=0)
+    buffer.tomar(timeout=0)
+    assert buffer.tomados == 2
+
+
+def test_el_fondo_del_buffer_es_el_retraso_que_no_se_va_solo() -> None:
+    # Con un transporte a rafagas, mirar cuanto ocupa el buffer no dice nada: cada segmento
+    # lo llena por definicion. Lo que importa es el valle entre rafaga y rafaga.
+    buffer = RecentFrameBuffer(4.0)
+    for numero in range(10):
+        buffer.publicar(_imagen(numero), INICIO + timedelta(seconds=0.2 * numero))
+    for _ in range(8):
+        buffer.tomar(timeout=0)
+    assert len(buffer) == 2
+    assert buffer.fondo == 0, "el buffer llego a estar vacio antes de la rafaga"
+    buffer.reiniciar_fondo()
+    assert buffer.fondo == 2
 
 
 def test_el_buffer_vacio_con_timeout_devuelve_none() -> None:
-    assert RecentFrameBuffer(2).tomar(timeout=0) is None
+    assert RecentFrameBuffer(2.0).tomar(timeout=0) is None
 
 
 def test_tomar_se_desbloquea_en_cuanto_llega_un_fotograma() -> None:
-    buffer = RecentFrameBuffer(2)
+    buffer = RecentFrameBuffer(2.0)
     recibidos: list[int] = []
 
     def consumir() -> None:
@@ -312,7 +454,7 @@ def test_tomar_se_desbloquea_en_cuanto_llega_un_fotograma() -> None:
 
 
 def test_cerrar_despierta_a_quien_espera_en_vez_de_dejarlo_colgado() -> None:
-    buffer = RecentFrameBuffer(2)
+    buffer = RecentFrameBuffer(2.0)
     resultado: list[object] = []
     consumidor = threading.Thread(target=lambda: resultado.append(buffer.tomar()), daemon=True)
     consumidor.start()
@@ -323,7 +465,7 @@ def test_cerrar_despierta_a_quien_espera_en_vez_de_dejarlo_colgado() -> None:
 
 def test_cerrar_suelta_los_fotogramas_que_quedaban() -> None:
     # A 1080p, veinte fotogramas son ~124 MB: no tienen por que sobrevivir a `close()`.
-    buffer = RecentFrameBuffer(4)
+    buffer = RecentFrameBuffer(4.0)
     buffer.publicar(_imagen(1), INICIO)
     buffer.cerrar()
     assert len(buffer) == 0
@@ -331,7 +473,7 @@ def test_cerrar_suelta_los_fotogramas_que_quedaban() -> None:
 
 
 def test_publicar_despues_de_cerrar_no_reabre_el_buffer() -> None:
-    buffer = RecentFrameBuffer(2)
+    buffer = RecentFrameBuffer(2.0)
     buffer.cerrar()
     buffer.publicar(_imagen(1), INICIO)
     assert buffer.tomar(timeout=0) is None
@@ -340,14 +482,14 @@ def test_publicar_despues_de_cerrar_no_reabre_el_buffer() -> None:
 def test_el_buffer_relanza_el_error_con_el_que_murio_el_hilo_lector() -> None:
     # El hilo lector no puede lanzar hacia el generador del consumidor: son pilas
     # distintas. Sin esto, quedarse sin reintentos seria indistinguible de ir lento.
-    buffer = RecentFrameBuffer(2)
+    buffer = RecentFrameBuffer(2.0)
     buffer.fallar(SourceError("se acabaron los reintentos"))
     with pytest.raises(SourceError, match="reintentos"):
         buffer.tomar(timeout=0)
 
 
-def test_un_buffer_sin_hueco_no_tiene_sentido() -> None:
-    with pytest.raises(ValueError, match="al menos un fotograma"):
+def test_un_buffer_sin_ventana_no_tiene_sentido() -> None:
+    with pytest.raises(ValueError, match="ventana"):
         RecentFrameBuffer(0)
 
 
