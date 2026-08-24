@@ -27,7 +27,7 @@ import cv2
 
 from cvp.core.registry import SOURCES
 from cvp.sources.errors import SourceError
-from cvp.sources.live import LiveVideoSource
+from cvp.sources.live import MAX_BACKLOG_S, MAX_DERIVA_S, LiveVideoSource
 
 if TYPE_CHECKING:  # pragma: no cover - solo para el tipado
     from cvp.pipeline.config import YouTubeLiveSource as YouTubeLiveSourceConfig
@@ -144,6 +144,8 @@ class YouTubeLiveSource(LiveVideoSource):
         refresh_url_every_s: int = 18000,
         max_retries: int | None = 20,
         backoff_s: Sequence[float] | None = None,
+        max_backlog_s: float = MAX_BACKLOG_S,
+        max_drift_s: float = MAX_DERIVA_S,
         resolver: Callable[[str], str] | None = None,
         capture_factory: Callable[[str], Any] | None = None,
         clock: Callable[[], datetime] | None = None,
@@ -153,6 +155,8 @@ class YouTubeLiveSource(LiveVideoSource):
             target_fps,
             max_retries=max_retries,
             backoff_s=backoff_s,
+            max_backlog_s=max_backlog_s,
+            max_drift_s=max_drift_s,
             clock=clock,
             sleeper=sleeper,
         )

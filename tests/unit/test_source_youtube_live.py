@@ -6,6 +6,10 @@ el fichero espera; con un directo, cada fotograma que se encola es retraso perma
 eso casi todos los tests de aqui miran lo mismo desde angulos distintos: que lo que sale
 es lo mas fresco que hay, no lo siguiente de una cola.
 
+Desde #23 el muestreo lo decide el hilo lector **en tiempo de video** (`VideoTimeline`) y
+lo que llega al consumidor pasa por un buffer acotado, asi que aqui se prueba sobre todo
+una cosa: que la secuencia que sale es la misma llegue el transporte como llegue.
+
 Ningun test sale a la red ni duerme de verdad. El reloj y el `sleeper` son inyectables, y
 la sincronizacion con el hilo lector se hace con semaforos y eventos, no con esperas: si
 un test tardara segundos, estaria mal escrito.
@@ -45,6 +49,11 @@ ESPERA_MAXIMA_S = 2.0
 # available", que suena a video borrado y no lo es. Se escriben literales a proposito:
 # un test que los leyera del codigo no comprobaria nada.
 CLIENTES = {"youtube": {"player_client": ["web_safari", "tv", "android"]}}
+
+# La captura falsa declara 30 fps, asi que con `target_fps=5` sale uno de cada seis.
+NATIVO = 30.0
+MUESTREO = 5.0
+CADA = int(NATIVO / MUESTREO)
 
 
 # --- Dobles ---------------------------------------------------------------------------
@@ -119,6 +128,7 @@ class CapturaFalsa:
         self.total = total
         self.entregados = 0
         self.liberaciones = 0
+        self._ultima: np.ndarray | None = None
         self._ancho = ancho
         self._alto = alto
         self._fps = fps
@@ -135,11 +145,18 @@ class CapturaFalsa:
             cv2.CAP_PROP_FPS: float(self._fps),
         }[prop]
 
-    def read(self) -> tuple[bool, np.ndarray | None]:
+    def grab(self) -> bool:
+        """Descodifica el siguiente, sin convertirlo. Es lo que el connector llama siempre."""
         if self.total is not None and self.entregados >= self.total:
-            return False, None
+            self._ultima = None
+            return False
         self.entregados += 1
-        return True, _imagen(self.entregados)
+        self._ultima = _imagen(self.entregados)
+        return True
+
+    def retrieve(self) -> tuple[bool, np.ndarray | None]:
+        """Materializa el ultimo descodificado. Solo se llama para los que se emiten."""
+        return self._ultima is not None, self._ultima
 
     def release(self) -> None:
         self.liberaciones += 1
@@ -151,16 +168,16 @@ class CapturaFalsa:
 class CapturaGobernada(CapturaFalsa):
     """Doble que entrega **un fotograma por cada permiso** que suelte el test.
 
-    `producir(n)` no vuelve hasta que el hilo lector ha publicado los n, de modo que el
+    `producir(n)` no vuelve hasta que el hilo lector ha **procesado** los n, de modo que el
     test puede afirmar numeros exactos en vez de tolerancias. El truco para saber que el
-    ultimo ya esta publicado es que el hilo lector publica antes de volver a leer: la
-    senal se emite al principio de la lectura siguiente.
+    ultimo ya esta muestreado es que el hilo lector decide y encola antes de volver a leer:
+    la senal se emite al principio de la lectura siguiente.
     """
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._permisos = threading.Semaphore(0)
-        self._publicados = threading.Semaphore(0)
+        self._procesados = threading.Semaphore(0)
         self._pendiente = False
         self._cerrada = threading.Event()
 
@@ -168,20 +185,22 @@ class CapturaGobernada(CapturaFalsa):
         for _ in range(cuantos):
             self._permisos.release()
         for _ in range(cuantos):
-            assert self._publicados.acquire(timeout=ESPERA_MAXIMA_S), (
+            assert self._procesados.acquire(timeout=ESPERA_MAXIMA_S), (
                 "el hilo lector no ha consumido los fotogramas producidos"
             )
 
-    def read(self) -> tuple[bool, np.ndarray | None]:
+    def grab(self) -> bool:
         if self._pendiente:
             self._pendiente = False
-            self._publicados.release()
+            self._procesados.release()
         while not self._cerrada.is_set():
             if self._permisos.acquire(timeout=0.01):
                 self.entregados += 1
                 self._pendiente = True
-                return True, _imagen(self.entregados)
-        return False, None
+                self._ultima = _imagen(self.entregados)
+                return True
+        self._ultima = None
+        return False
 
     def cerrar(self) -> None:
         """Desbloquea al hilo lector. El test lo llama antes de `close()`."""
@@ -265,7 +284,7 @@ def doble_de_ytdlp(
 def fuente(
     fabrica: Fabrica,
     *,
-    target_fps: float = 1000.0,
+    target_fps: float = NATIVO,
     reloj: RelojFalso | None = None,
     resolvedor: Resolvedor | None = None,
     sleeper: Callable[[float], object] | None = None,
@@ -273,8 +292,8 @@ def fuente(
 ) -> YouTubeLiveSource:
     """Una fuente con los cuatro puntos de inyeccion puestos: ni red, ni OpenCV, ni esperas.
 
-    `target_fps` alto por defecto para que el paceo no estorbe en los tests que no van de
-    paceo; el que va de paceo lo baja.
+    `target_fps` igual al nativo por defecto, para que salgan todos los fotogramas y el
+    muestreo no estorbe en los tests que no van de muestreo; el que va de muestreo lo baja.
 
     El `sleeper` por defecto adelanta el reloj, que es lo que quiere casi todo el fichero.
     Lo cambia quien necesite un reloj que **no se mueva en absoluto**.
@@ -335,6 +354,11 @@ def test_los_valores_por_defecto_son_los_reales() -> None:
     assert origen.refresh_url_every_s == 18000
     assert origen.max_retries == 20
     assert origen.backoff_s == [1.0, 2.0, 5.0, 15.0, 30.0, 60.0]
+    # De #23: cuanto video puede esperar por delante del analisis, y cuanto puede
+    # descolgarse el tiempo de video del reloj antes de re-anclar.
+    assert origen.max_backlog_s == 4.0
+    assert origen.max_drift_s == 30.0
+    assert origen.profundidad_del_buffer == 20
 
 
 @pytest.mark.parametrize(
@@ -345,6 +369,8 @@ def test_los_valores_por_defecto_son_los_reales() -> None:
         ({"target_fps": 5, "backoff_s": []}, "backoff_s"),
         ({"target_fps": 5, "backoff_s": [1, 0]}, "backoff_s"),
         ({"target_fps": 5, "refresh_url_every_s": 0}, "refresh_url_every_s"),
+        ({"target_fps": 5, "max_backlog_s": 0}, "max_backlog_s"),
+        ({"target_fps": 5, "max_drift_s": 0}, "max_drift_s"),
     ],
 )
 def test_una_configuracion_imposible_falla_al_construir(
@@ -429,19 +455,27 @@ def test_open_arranca_un_hilo_lector_daemon() -> None:
         assert all(hilo.daemon for hilo in hilos)
 
 
-def test_un_consumidor_lento_recibe_saltos_y_no_una_cola_con_retraso() -> None:
-    # El corazon del issue. Con una cola, un consumidor que va a la mitad de velocidad
-    # recibiria 1, 2, 3... con un retraso que crece sin parar. Descartando, recibe el mas
-    # reciente que haya llegado y el retraso no crece nunca.
+def test_un_consumidor_lento_descarta_lo_viejo_y_su_retraso_no_pasa_del_buffer() -> None:
+    # La propiedad buena de #5, que esta reescritura no puede perder: quien va lento se
+    # salta fotogramas, no acumula retraso. Con `max_backlog_s=0.6` caben tres
+    # seleccionados, asi que el analisis no puede ir mas de 0,6 s de video por detras del
+    # directo por lento que vaya. Con una cola sin fondo recibiria 1, 7, 13... y llegaria
+    # a los ultimos con seis segundos de retraso.
     captura = CapturaGobernada()
-    with abierta(fuente(Fabrica(captura)), captura) as origen:
+    origen = fuente(Fabrica(captura), target_fps=MUESTREO, max_backlog_s=0.6)
+    with abierta(origen, captura):
         fotogramas = origen.frames()
-        captura.producir(1)
-        numeros = [numero_de(next(fotogramas))]
-        for _ in range(2):
-            captura.producir(46)
-            numeros.append(numero_de(next(fotogramas)))
-    assert numeros == [1, 47, 93]
+        # 180 fotogramas son 6 s de video: 30 seleccionados para tres huecos.
+        captura.producir(180)
+        recibidos = [_siguiente(fotogramas) for _ in range(3)]
+
+    # Los tres ultimos seleccionados, no los tres primeros: los indices de origen saltan.
+    assert [numero_de(f) for f in recibidos] == [163, 169, 175]
+    # Y el mas viejo que le llega esta a 0,4 s del ultimo que se selecciono, por debajo
+    # de los 0,6 s de buffer. Ese es el techo del retraso, y no crece con el tiempo.
+    ultimo_seleccionado = INICIO + timedelta(seconds=174 / NATIVO)
+    assert ultimo_seleccionado - recibidos[0].timestamp == timedelta(seconds=0.4)
+    assert [f.index for f in recibidos] == [0, 1, 2]
 
 
 def test_no_repite_el_ultimo_fotograma_cuando_el_consumidor_va_mas_deprisa() -> None:
@@ -464,17 +498,148 @@ def test_no_repite_el_ultimo_fotograma_cuando_el_consumidor_va_mas_deprisa() -> 
         assert recibidos == [2]
 
 
-def test_target_fps_se_pacea_contra_el_reloj_inyectado() -> None:
-    # Con una fuente en directo `target_fps` se mide contra el reloj de pared, no contra
-    # la posicion en el medio: como mucho un fotograma cada 200 ms con target_fps=5.
+def _siguiente(fotogramas: Iterator[Frame]) -> Frame:
+    """`next()` con tope de tiempo, para que un fotograma que no llega falle en vez de colgar.
+
+    Sin esto, cualquier cambio que dejara al connector sin entregar lo que toca -por
+    ejemplo volver al buffer de uno solo de #5- dejaria la suite colgada en vez de roja.
+    """
+    caja: list[Frame] = []
+    pidiendo = threading.Thread(target=lambda: caja.append(next(fotogramas)), daemon=True)
+    pidiendo.start()
+    pidiendo.join(ESPERA_MAXIMA_S)
+    assert caja, "el connector no ha entregado el fotograma que tocaba"
+    return caja[0]
+
+
+def _drenar(fotogramas, salida: list[Frame], decodificados: int, cada: int) -> None:
+    """Saca del buffer los que ya tienen que estar, sabiendo cuantos se han decodificado.
+
+    Cuantos salen no es una tolerancia: con `native_fps` conocido, el muestreo depende
+    solo del numero de fotograma, asi que el test puede calcularlo.
+    """
+    while len(salida) < (decodificados - 1) // cada + 1:
+        salida.append(_siguiente(fotogramas))
+
+
+def _en_rafagas(
+    captura: CapturaGobernada,
+    origen: YouTubeLiveSource,
+    reloj: RelojFalso,
+    *,
+    por_rafaga: int,
+    rafagas: int,
+    silencio_s: float,
+) -> list[Frame]:
+    """Un transporte a rafagas: un segmento entero de golpe y despues nada, en bucle."""
+    fotogramas = origen.frames()
+    salida: list[Frame] = []
+    decodificados = 0
+    for _ in range(rafagas):
+        captura.producir(por_rafaga)
+        decodificados += por_rafaga
+        _drenar(fotogramas, salida, decodificados, CADA)
+        reloj.avanzar(silencio_s)
+    return salida
+
+
+def _uniforme(
+    captura: CapturaGobernada,
+    origen: YouTubeLiveSource,
+    reloj: RelojFalso,
+    *,
+    total: int,
+    paso_s: float,
+) -> list[Frame]:
+    """El transporte que se porta: un fotograma cada 1/30 s, repartidos en el tiempo."""
+    fotogramas = origen.frames()
+    salida: list[Frame] = []
+    for decodificados in range(1, total + 1):
+        captura.producir(1)
+        reloj.avanzar(paso_s)
+        _drenar(fotogramas, salida, decodificados, CADA)
+    return salida
+
+
+def test_una_fuente_a_rafagas_y_una_uniforme_dan_exactamente_la_misma_secuencia() -> None:
+    """El arreglo de #23, en un solo assert.
+
+    Cuatro segmentos de 4 s entregados de golpe con 4 s de silencio detras, contra los
+    mismos 480 fotogramas repartidos uno a uno. Antes, la primera daba 0,85 fps y
+    timestamps comprimidos y la segunda iba bien; ahora la salida es identica, porque el
+    muestreo se decide en tiempo de video y no contra el reloj.
+    """
+    captura_a = CapturaGobernada()
+    reloj_a = RelojFalso()
+    origen_a = fuente(Fabrica(captura_a), target_fps=MUESTREO, reloj=reloj_a, max_backlog_s=5.0)
+    with abierta(origen_a, captura_a):
+        a_rafagas = _en_rafagas(
+            captura_a, origen_a, reloj_a, por_rafaga=120, rafagas=4, silencio_s=4.0
+        )
+
+    captura_b = CapturaGobernada()
+    reloj_b = RelojFalso()
+    origen_b = fuente(Fabrica(captura_b), target_fps=MUESTREO, reloj=reloj_b, max_backlog_s=5.0)
+    with abierta(origen_b, captura_b):
+        uniforme = _uniforme(captura_b, origen_b, reloj_b, total=480, paso_s=1 / NATIVO)
+
+    assert [(numero_de(f), f.timestamp, f.index) for f in a_rafagas] == [
+        (numero_de(f), f.timestamp, f.index) for f in uniforme
+    ]
+
+
+def test_sobre_una_fuente_a_rafagas_salen_cinco_fotogramas_por_segundo_de_video() -> None:
+    # No los que quepan en la rafaga. 480 fotogramas decodificados son 16 s de video, y a
+    # `target_fps: 5` eso son 80 fotogramas, lleguen como lleguen.
+    captura = CapturaGobernada()
     reloj = RelojFalso()
-    captura = CapturaFalsa()
-    instantes: list[datetime] = []
-    with abierta(fuente(Fabrica(captura), target_fps=5, reloj=reloj), captura) as origen:
-        for _, _fotograma in zip(range(4), origen.frames(), strict=False):
-            instantes.append(reloj.ahora)
-    huecos = [(b - a).total_seconds() for a, b in zip(instantes[:-1], instantes[1:], strict=True)]
-    assert huecos == [0.2, 0.2, 0.2]
+    origen = fuente(Fabrica(captura), target_fps=MUESTREO, reloj=reloj, max_backlog_s=5.0)
+    with abierta(origen, captura):
+        emitidos = _en_rafagas(captura, origen, reloj, por_rafaga=120, rafagas=4, silencio_s=4.0)
+
+    segundos_de_video = 480 / NATIVO
+    assert len(emitidos) == 80
+    assert len(emitidos) / segundos_de_video == MUESTREO
+    # Uno de cada seis, sin repetir ninguno y sin reiniciar el indice.
+    assert [numero_de(f) for f in emitidos] == [1 + CADA * n for n in range(80)]
+    assert [f.index for f in emitidos] == list(range(80))
+
+
+def test_los_timestamps_de_una_fuente_a_rafagas_van_separados_el_periodo() -> None:
+    # Antes los fotogramas salian separados 200 ms de reloj y ~900 ms de video, con saltos
+    # de 4 s entre rafagas. Cualquier agregacion por minuto construida encima salia
+    # deformada, y no se veia en el dashboard.
+    captura = CapturaGobernada()
+    reloj = RelojFalso()
+    origen = fuente(Fabrica(captura), target_fps=MUESTREO, reloj=reloj, max_backlog_s=5.0)
+    with abierta(origen, captura):
+        emitidos = _en_rafagas(captura, origen, reloj, por_rafaga=120, rafagas=4, silencio_s=4.0)
+
+    marcas = [f.timestamp for f in emitidos]
+    huecos = sorted((b - a).total_seconds() for a, b in zip(marcas[:-1], marcas[1:], strict=True))
+    mediana = huecos[len(huecos) // 2]
+    assert abs(mediana - 1 / MUESTREO) <= 0.1 / MUESTREO
+    # Y ni un salto por encima de 1 s: no hay reconexion ni re-anclaje en este escenario.
+    assert max(huecos) <= 1.0
+    assert marcas == sorted(marcas)
+    assert len(set(marcas)) == len(marcas)
+
+
+def test_el_consumidor_no_espera_cuando_ya_hay_fotograma_seleccionado() -> None:
+    # El detalle barato que tambien estaba medido: `_emitir` sumaba el periodo al tiempo
+    # de proceso en vez de solaparlo, ~200 ms por fotograma regalados. Ahora quien decide
+    # la cadencia es el hilo lector, y el consumidor no espera a nada que ya tenga.
+    reloj = RelojFalso()
+    captura = CapturaGobernada()
+    origen = fuente(Fabrica(captura), target_fps=MUESTREO, reloj=reloj)
+    with abierta(origen, captura):
+        fotogramas = origen.frames()
+        captura.producir(60)  # 2 s de video: 10 seleccionados esperando
+        emitidos = [_siguiente(fotogramas) for _ in range(10)]
+
+    assert [f.index for f in emitidos] == list(range(10))
+    assert reloj.esperas == [], "el consumidor ha dormido teniendo fotogramas esperando"
+    assert reloj.ahora == INICIO
 
 
 def test_frames_no_termina_sola_en_un_directo() -> None:
@@ -739,32 +904,37 @@ def test_cada_reconexion_deja_constancia_del_motivo_en_el_log(
 # --- Los `Frame` que salen ------------------------------------------------------------
 
 
-def test_el_timestamp_es_el_instante_de_lectura_y_no_el_de_emision() -> None:
+def test_el_timestamp_es_el_del_video_y_no_el_del_transporte() -> None:
     # "Cuando paso" y "cuando lo miramos" no son lo mismo, y el analizador quiere el
-    # primero. Aqui pasan 10 s entre una cosa y la otra.
+    # primero. Aqui el transporte entrega 2 s de video de golpe y despues el reloj avanza
+    # 10 s: los timestamps siguen siendo los del video, separados su periodo.
     reloj = RelojFalso()
     captura = CapturaGobernada()
-    with abierta(fuente(Fabrica(captura), reloj=reloj), captura) as origen:
+    origen = fuente(Fabrica(captura), target_fps=MUESTREO, reloj=reloj)
+    with abierta(origen, captura):
         fotogramas = origen.frames()
-        captura.producir(1)
+        captura.producir(60)
         reloj.avanzar(10)
-        fotograma = next(fotogramas)
-    assert fotograma.timestamp == INICIO
+        marcas = [_siguiente(fotogramas).timestamp for _ in range(10)]
+    assert marcas == [INICIO + timedelta(seconds=0.2 * n) for n in range(10)]
 
 
 def test_los_timestamps_crecen_aunque_el_reloj_no_avance_ni_un_microsegundo() -> None:
     # Un reloj parado es el caso extremo de dos cosas reales: un reloj de baja resolucion
-    # y un NTP que echa la hora atras en un proceso que lleva dias vivo. Aqui no lo mueve
-    # nada, tampoco el `sleeper` del paceo: si lo moviera, el test pasaria igual sin la
-    # defensa y estaria dando una confianza que no ha ganado.
+    # y un NTP que echa la hora atras en un proceso que lleva dias vivo. Con el tiempo de
+    # video no hace falta ninguna defensa contra eso: los instantes salen del numero de
+    # fotograma, no de cuando se leyo.
     reloj = RelojFalso()
-    captura = CapturaFalsa()
-    origen = fuente(Fabrica(captura), reloj=reloj, sleeper=lambda _segundos: None)
+    captura = CapturaGobernada()
+    origen = fuente(
+        Fabrica(captura), target_fps=MUESTREO, reloj=reloj, sleeper=lambda _segundos: None
+    )
     with abierta(origen, captura):
-        marcas = [f.timestamp for _, f in zip(range(5), origen.frames(), strict=False)]
+        fotogramas = origen.frames()
+        captura.producir(30)
+        marcas = [_siguiente(fotogramas).timestamp for _ in range(5)]
     assert reloj.ahora == INICIO, "el reloj se ha movido: este test ya no prueba lo que dice"
-    # Las cinco lecturas ocurrieron en el mismo instante y aun asi salen separadas.
-    assert marcas == [INICIO + timedelta(microseconds=n) for n in range(5)]
+    assert marcas == [INICIO + timedelta(seconds=0.2 * n) for n in range(5)]
     assert all(marca.utcoffset() == timedelta(0) for marca in marcas)
 
 
