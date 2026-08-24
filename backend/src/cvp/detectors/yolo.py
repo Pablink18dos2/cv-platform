@@ -65,9 +65,14 @@ class YoloDetector:
     # --- construccion -----------------------------------------------------------------
 
     def _cargar(self, weights: str) -> Any:
+        # La ruta se resuelve **antes** de importar ultralytics, y el orden importa: importar
+        # ultralytics cuesta unos 20 s en esta maquina, y una ruta de pesos que no existe se
+        # sabe sin cargar nada. Al reves, un error de configuracion trivial tardaba 20 s en
+        # aparecer y de paso hacia que un test de un solo assert costara eso mismo.
+        ruta = self._resolver_pesos(weights)
+
         from ultralytics import YOLO
 
-        ruta = self._resolver_pesos(weights)
         try:
             return YOLO(str(ruta))
         except Exception as exc:  # ultralytics lanza de todo
