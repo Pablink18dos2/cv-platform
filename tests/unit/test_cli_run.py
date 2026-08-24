@@ -17,6 +17,7 @@ import pytest
 import yaml
 
 from cvp.cli import NIVEL_POR_DEFECTO, build_parser, main, nivel_por_defecto
+from cvp.pipeline import AbortRequested, PipelineError
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "config"
 ROTO = FIXTURES / "roto-tres-errores.yaml"
@@ -132,6 +133,65 @@ def test_un_nivel_de_entorno_que_no_existe_avisa_y_sigue_con_info(
     para no medir nada esta noche."""
     assert nivel_por_defecto({"CVP_LOG_LEVEL": "verboso"}) == NIVEL_POR_DEFECTO
     assert "no es un nivel de log" in capsys.readouterr().err
+
+
+# --- Los codigos de salida, que son el contrato con systemd ---------------------------
+#
+# El bucle se prueba con dobles en `tests/component/`; lo que se fija aqui es la traduccion
+# de cada final a su codigo. Se sustituye `run_project` porque el mapa de codigos no depende
+# de lo que pase dentro, y asi estos tests no abren un directo ni cargan un modelo.
+
+
+def _sustituir_run_project(monkeypatch: pytest.MonkeyPatch, efecto: Any) -> None:
+    def falso(*_args: Any, **_kwargs: Any) -> Any:
+        if isinstance(efecto, BaseException):
+            raise efecto
+        return efecto
+
+    monkeypatch.setattr("cvp.pipeline.runner.run_project", falso)
+
+
+class StatsFalsos:
+    def summary(self) -> str:
+        return "ejecucion de mentira\n  fotogramas:      3 (1.00 fps de salida)"
+
+
+def test_una_ejecucion_que_termina_sola_sale_con_cero_e_imprime_el_resumen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _sustituir_run_project(monkeypatch, StatsFalsos())
+    assert main(["run", str(proyecto(tmp_path))]) == 0
+    assert "fps de salida" in capsys.readouterr().out
+
+
+def test_el_aborto_del_segundo_ctrl_c_sale_con_130_y_no_con_cero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """130 es 128 + SIGINT, la convención de siempre. Un 0 aquí diría que todo fue bien."""
+    _sustituir_run_project(monkeypatch, AbortRequested("segundo Ctrl+C: se aborta"))
+    assert main(["run", str(proyecto(tmp_path))]) == 130
+    salida = capsys.readouterr()
+    assert "abortado" in salida.err
+    assert "Traceback" not in salida.err
+    assert salida.out == ""
+
+
+def test_un_ctrl_c_que_se_escapa_por_otro_camino_tambien_sale_con_130(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Es el Ctrl+C que llega sin manejador puesto: durante la carga de los pesos, o ya
+    dentro del propio apagado. No hay nada que cerrar limpiamente, y un 0 mentiria."""
+    _sustituir_run_project(monkeypatch, KeyboardInterrupt())
+    assert main(["run", str(proyecto(tmp_path))]) == 130
+    assert "abortado" in capsys.readouterr().err
+
+
+def test_un_fallo_de_ejecucion_sale_con_dos(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _sustituir_run_project(monkeypatch, PipelineError("la fuente no abre"))
+    assert main(["run", str(proyecto(tmp_path))]) == 2
+    assert "la fuente no abre" in capsys.readouterr().err
 
 
 # --- El directorio del proyecto y el `type:` sin implementacion -----------------------

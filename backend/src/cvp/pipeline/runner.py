@@ -42,10 +42,11 @@ from typing import Any
 
 from cvp.core import BBox
 from cvp.pipeline.config import ProjectConfig, Reconnect, Region
-from cvp.pipeline.errors import PipelineError
+from cvp.pipeline.errors import AbortRequested, PipelineError
 from cvp.pipeline.factory import build_pipeline
 
 __all__ = [
+    "AbortRequested",
     "BlockStats",
     "PipelineRunner",
     "RunStats",
@@ -314,9 +315,10 @@ class PipelineRunner:
         justamente su razon de ser; los dos limites son lo que lo hace demostrable y
         testeable.
 
-        Devuelve los contadores. Lo unico que puede escapar de aqui es un fallo de verdad
-        (la fuente no abre, un bloque revienta) o el `KeyboardInterrupt` de un **segundo**
-        Ctrl+C; el primero apaga limpio y vuelve con normalidad.
+        Devuelve los contadores. De aqui solo se escapan dos cosas: un fallo de verdad (la
+        fuente no abre, un bloque revienta) y el `AbortRequested` de un **segundo** Ctrl+C,
+        que no se captura a proposito. El primer Ctrl+C apaga limpio y vuelve con
+        normalidad.
         """
         if max_frames is not None and max_frames < 1:
             raise ValueError(f"max_frames es un numero de fotogramas >= 1, no {max_frames!r}")
@@ -370,35 +372,63 @@ class PipelineRunner:
                 if self._parada.is_set():
                     break
         except KeyboardInterrupt:
-            # Ctrl+C mientras se procesaba un fotograma. No es un fallo del programa y un
-            # traceback solo taparia el resumen, asi que se apaga limpio y se sale con 0.
-            # Se marca la parada para que un **segundo** Ctrl+C, ya dentro del `finally`,
-            # aborte en vez de encadenar otro apagado ordenado.
+            # Un Ctrl+C que llega **sin** el manejador de `manejar_sigint` puesto: lo
+            # levanta el manejador por defecto de Python donde pille, normalmente dentro de
+            # la inferencia. No es un fallo del programa y un traceback solo taparia el
+            # resumen, asi que se apaga limpio y se sale con 0.
+            #
+            # Este `except` es la razon de que el aborto **no** sea un `KeyboardInterrupt`:
+            # aqui dentro no hay forma de distinguir "primer Ctrl+C" de "segundo", y
+            # cualquier aborto que pasara por esta puerta se convertiria en otro apagado
+            # ordenado. Ver `request_stop`.
             self._parada.set()
             self.stats.interrupted = True
             _log.info("Ctrl+C: cerrando la fuente y haciendo flush de los sinks")
         finally:
             self.stats.elapsed_s = self._timer() - inicio
             self.stats.ended_at = self._clock()
-            # Pase lo que pase: fin normal, limite alcanzado, Ctrl+C o excepcion.
+            # Pase lo que pase: fin normal, limite alcanzado, Ctrl+C, aborto o excepcion.
+            # En el aborto tambien se intenta, porque cerrar suele costar milisegundos y
+            # perder las escrituras por las prisas seria peor; si es el propio cierre el que
+            # se cuelga, el tercer Ctrl+C ya no pasa por nuestro manejador y mata el proceso.
             self._cerrar_fuente()
             self._flush_sinks()
         return self.stats
 
     def request_stop(self) -> None:
-        """Pide la parada. **La segunda vez aborta de inmediato.**
+        """Pide la parada. **La segunda vez aborta**, y con `AbortRequested`, no con
+        `KeyboardInterrupt`.
 
-        Es lo que hace el manejador de `SIGINT`: el primer Ctrl+C termina el fotograma en
-        curso y apaga ordenadamente; el segundo lanza `KeyboardInterrupt` desde el propio
-        manejador, que es donde toca, porque un apagado que no se puede abortar es una
-        trampa: si el que se ha colgado es el cierre de la fuente, el usuario se queda sin
-        salida.
+        Es lo que hace el manejador de `SIGINT`. El primero termina el fotograma en curso y
+        apaga ordenadamente; el segundo lanza, desde el propio manejador, una excepcion que
+        no captura nadie por el camino.
+
+        **Por que no un `KeyboardInterrupt`, que es lo que parece natural:** porque `run()`
+        captura `KeyboardInterrupt` a proposito, para convertir el primer Ctrl+C en un
+        apagado limpio con codigo 0. Un aborto que fuese `KeyboardInterrupt` se lo tragaria
+        ese mismo `except` siempre que el bucle estuviera dentro del `try` —o sea, casi
+        siempre: el proceso se pasa el 71 % del tiempo esperando fotograma— y el usuario
+        recibiria otro apagado ordenado y un 0. Solo abortaria de verdad si la senal cayera
+        dentro del `finally`, que es el caso raro. Fue el fallo de la primera version de
+        este runner, y `AbortRequested` deriva de `BaseException` justamente para que no
+        pueda repetirse: ni el `except KeyboardInterrupt` del apagado ordenado ni ninguno de
+        los `except Exception` que protegen un sink roto o el cierre de la fuente pueden
+        detenerla.
+
+        Y se lanza desde el manejador en vez de apuntarse en una bandera porque, si lo que
+        se ha colgado es el cierre de la fuente, no hay ningun sitio del bucle donde mirarla.
         """
         if self._parada.is_set():
-            raise KeyboardInterrupt(
+            raise AbortRequested(
                 "segundo Ctrl+C: se aborta sin esperar a que termine el apagado limpio"
             )
         self._parada.set()
+        # Que la ejecucion la pararon desde fuera es un dato de la ejecucion, no un detalle
+        # del apagado: #12 lo servira por la API, y un worker que alguien detiene a mano a
+        # las tres de la manana no puede figurar como una ejecucion que termino sola. Se
+        # marca aqui, y no solo en el `except KeyboardInterrupt` de `run()`, porque el
+        # camino real del CLI —senal, manejador, `request_stop`— no pasa por ese `except`.
+        self.stats.interrupted = True
         _log.info("Ctrl+C: se termina el fotograma en curso (otro Ctrl+C aborta ya)")
 
     # --- Las piezas del bucle ---------------------------------------------------------
@@ -548,13 +578,33 @@ def _espera_de_backoff(backoff_s: Sequence[float], intento: int) -> float:
 def manejar_sigint(runner: PipelineRunner) -> Iterator[None]:
     """Conecta Ctrl+C con `runner.request_stop()` mientras dure el bloque.
 
-    Se instala aqui y no dentro de `run()` porque `signal.signal` solo funciona en el hilo
-    principal: un runner usado desde otro hilo (o desde un test) tiene que seguir
+    La escalera tiene tres escalones, y cada uno existe porque el anterior puede quedarse
+    corto:
+
+    1. **Primer Ctrl+C**: se termina el fotograma en curso, se cierra la fuente, se hace
+       flush y se sale con 0.
+    2. **Segundo**: `AbortRequested` desde este manejador. Deja de procesar ahora mismo y
+       sale con 130. Todavia intenta cerrar y hacer flush, porque normalmente eso tarda
+       milisegundos y perder las escrituras por las prisas seria peor.
+    3. **Tercero**: ya no pasa por aqui. Al abortar se devuelve `SIGINT` al manejador por
+       defecto, que mata el proceso. Es la salida si hasta el cierre de la fuente se
+       cuelga, y es lo que hace que la promesa "se puede abortar" no dependa de que nuestro
+       propio codigo de apagado funcione.
+
+    El manejador se instala aqui y no dentro de `run()` porque `signal.signal` solo funciona
+    en el hilo principal: un runner usado desde otro hilo (o desde un test) tiene que seguir
     funcionando, y para eso basta con llamar a `request_stop()`.
     """
 
     def _manejar(_signum: int, _frame: object) -> None:
-        runner.request_stop()
+        try:
+            runner.request_stop()
+        except AbortRequested:
+            # El tercer escalon. Se restaura aqui y no en `request_stop` porque
+            # `signal.signal` solo se puede llamar desde el hilo principal, y
+            # `request_stop` tiene que poder llamarse desde cualquiera.
+            signal.signal(signal.SIGINT, signal.SIG_DFL)
+            raise
 
     anterior = signal.signal(signal.SIGINT, _manejar)
     try:

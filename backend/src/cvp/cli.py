@@ -8,10 +8,13 @@ que es donde toca. Un `import` de esos arriba del fichero haria lento tambien a 
 
 Codigos de salida, que es el contrato con quien lo llame desde un script o desde systemd:
 
-- `0` — todo bien, incluido el apagado limpio con Ctrl+C.
+- `0` — todo bien, incluido el apagado limpio con el primer Ctrl+C.
 - `1` — la configuracion no vale: YAML invalido, o un `type:` sin implementacion registrada.
 - `2` — la ejecucion ha fallado: la fuente no abre ni reintentando, o un bloque revienta.
-- `130` — abortado por un segundo Ctrl+C (128 + SIGINT, la convencion de siempre).
+- `130` — abortado (128 + SIGINT, la convencion de siempre). Es el segundo Ctrl+C, y tambien
+  el primero si llega **antes de que el pipeline arranque**, mientras se importa torch o se
+  cargan los pesos: ahi todavia no hay manejador puesto ni nada que apagar, asi que el
+  proceso termina por la senal y decirlo con un 0 seria mentir.
 """
 
 from __future__ import annotations
@@ -153,7 +156,7 @@ def _run(
     # Aqui si toca pagar OpenCV, ultralytics y yt-dlp: son las dependencias de los bloques
     # que se van a construir. `cvp validate` no pasa por esta linea.
     from cvp.core import UnknownTypeError
-    from cvp.pipeline.errors import PipelineError
+    from cvp.pipeline.errors import AbortRequested, PipelineError
     from cvp.pipeline.runner import run_project
 
     try:
@@ -172,8 +175,14 @@ def _run(
     except PipelineError as exc:
         print(f"{path}: {exc}", file=sys.stderr)
         return 2
+    except AbortRequested as exc:
+        # El segundo Ctrl+C, que aborta a peticion del usuario. No es un `KeyboardInterrupt`
+        # a proposito: ver `PipelineRunner.request_stop`.
+        print(f"abortado: {exc}", file=sys.stderr)
+        return 130
     except KeyboardInterrupt:
-        # El segundo Ctrl+C, que aborta el apagado limpio a peticion del usuario.
+        # Un Ctrl+C que se escapa por otro camino (sin manejador puesto, o durante el propio
+        # apagado). El usuario ha pedido salir ya, asi que mismo trato.
         print("abortado", file=sys.stderr)
         return 130
     except Exception:

@@ -10,7 +10,25 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-__all__ = ["ConfigError", "PipelineError"]
+__all__ = ["AbortRequested", "ConfigError", "PipelineError"]
+
+
+class AbortRequested(BaseException):
+    """El usuario ha pedido abortar —segundo Ctrl+C— y no quiere esperar al apagado.
+
+    **Deriva de `BaseException` y no de `KeyboardInterrupt`, y ese es todo el punto.** El
+    bucle de `run()` captura `KeyboardInterrupt` a proposito, para convertir el primer
+    Ctrl+C en un apagado ordenado con codigo 0. Si el aviso de aborto fuera un
+    `KeyboardInterrupt` —que es lo que parece natural, porque es lo que lanza Python— se lo
+    tragaria ese mismo `except` y el segundo Ctrl+C acabaria siendo otro apagado ordenado:
+    justo el fallo que tenia la primera version de este runner, donde el aborto solo
+    funcionaba si la senal caia dentro del `finally`, o sea en el caso raro y no en el que
+    hace el usuario.
+
+    Por el mismo motivo tampoco deriva de `Exception`: ningun `except Exception` de los que
+    protegen un sink roto o el cierre de la fuente debe poder detenerla. Solo el CLI, que la
+    traduce a codigo 130, y quien escriba `except AbortRequested` con toda la intencion.
+    """
 
 
 class PipelineError(RuntimeError):

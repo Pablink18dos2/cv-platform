@@ -14,10 +14,11 @@ ultralytics. Lo unico suyo que vive en este `__init__` es la excepcion, porque e
 from __future__ import annotations
 
 from cvp.pipeline.config import CONFIG_SCHEMAS, Point, ProjectConfig, Region, load_project_config
-from cvp.pipeline.errors import ConfigError, PipelineError
+from cvp.pipeline.errors import AbortRequested, ConfigError, PipelineError
 
 __all__ = [
     "CONFIG_SCHEMAS",
+    "AbortRequested",
     "ConfigError",
     "PipelineError",
     "Point",

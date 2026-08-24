@@ -36,7 +36,7 @@ from cvp.core import (
     UnknownTypeError,
 )
 from cvp.core.registry import Registry
-from cvp.pipeline import PipelineError, ProjectConfig, load_project_config
+from cvp.pipeline import AbortRequested, PipelineError, ProjectConfig, load_project_config
 from cvp.pipeline.config import Reconnect
 from cvp.pipeline.factory import build_pipeline
 from cvp.pipeline.runner import PipelineRunner, manejar_sigint, run_project
@@ -635,10 +635,15 @@ def test_un_max_frames_absurdo_se_rechaza_antes_de_abrir_la_fuente(valor: int) -
 def test_el_camino_normal_cierra_la_fuente_y_no_deja_hilos() -> None:
     fuente = FakeSource(frames=3)
     sink = FakeSink()
-    runner(source=fuente, analyzers=(FakeAnalyzer(),), sinks=(sink,)).run()
+    stats = runner(source=fuente, analyzers=(FakeAnalyzer(),), sinks=(sink,)).run()
     assert fuente.cierres == 1
     assert sink.flushes == 1
     assert hilos_de_la_fuente() == []
+    # Y una ejecucion que termina sola **no** queda marcada como interrumpida: el flag
+    # distingue "la pararon" de "se acabo el video", y sirve de poco si siempre dice lo
+    # mismo.
+    assert stats.interrupted is False
+    assert "interrumpida" not in stats.summary()
 
 
 def test_max_frames_cierra_la_fuente_y_no_deja_hilos() -> None:
@@ -728,7 +733,7 @@ def test_el_segundo_ctrl_c_aborta_en_vez_de_encadenar_otro_apagado() -> None:
     cierre de la fuente, el usuario se queda sin salida."""
     corredor = runner()
     corredor.request_stop()
-    with pytest.raises(KeyboardInterrupt):
+    with pytest.raises(AbortRequested):
         corredor.request_stop()
 
 
@@ -739,9 +744,126 @@ def test_manejar_sigint_conecta_ctrl_c_con_la_parada_y_deja_el_manejador_como_es
         assert signal.getsignal(signal.SIGINT) is not anterior
         signal.raise_signal(signal.SIGINT)
         # El primero solo pide la parada; el segundo aborta desde el propio manejador.
-        with pytest.raises(KeyboardInterrupt):
+        with pytest.raises(AbortRequested):
             signal.raise_signal(signal.SIGINT)
+        # Y desde el aborto, Ctrl+C vuelve a ser el manejador por defecto: un tercero mata
+        # el proceso sin pasar por aqui. Es el ultimo escalon, por si hasta el aborto se
+        # quedara colgado dentro del cierre de la fuente.
+        assert signal.getsignal(signal.SIGINT) is signal.SIG_DFL
     assert signal.getsignal(signal.SIGINT) is anterior
+
+
+# --- Ctrl+C de verdad, con el bucle corriendo -----------------------------------------
+#
+# Los dos tests de arriba llaman a `request_stop()` **fuera** de `run()`, asi que comprueban
+# lo que hace `request_stop`, no lo que le pasa a un pipeline en marcha cuando llega la
+# senal. Esa distincion es la que dejo pasar el fallo que cazan los tests de aqui abajo: el
+# `KeyboardInterrupt` que lanzaba el manejador se lo comia el `except KeyboardInterrupt` del
+# propio `run()`, y el segundo Ctrl+C acababa siendo otro apagado ordenado con codigo 0.
+
+
+class DetectorQueSenala(FakeDetector):
+    """Detector que lanza `SIGINT` **de verdad** mientras el bucle esta corriendo.
+
+    Es la unica forma de recorrer el camino del CLI: el manejador de senal se ejecuta en el
+    hilo principal, dentro de la llamada que estuviera en curso, y con el proceso ocupado
+    infiriendo esa llamada es `detect()`, que es justo donde caen los Ctrl+C de verdad.
+    """
+
+    def __init__(self, *, en: int, veces: int = 1, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.en = en
+        self.veces = veces
+
+    def detect(self, frame: Frame, roi: BBox | None = None) -> list[Detection]:
+        if frame.index == self.en:
+            for _ in range(self.veces):
+                signal.raise_signal(signal.SIGINT)
+        return super().detect(frame, roi)
+
+
+def test_un_sigint_de_verdad_a_mitad_del_bucle_apaga_limpio_y_queda_registrado() -> None:
+    """El camino real de un Ctrl+C: senal de verdad, manejador puesto y bucle corriendo.
+
+    Ademas de apagar limpio tiene que **quedar escrito** que lo pararon: un worker que
+    alguien detiene a mano a las tres de la manana no puede figurar como una ejecucion que
+    termino sola, porque ese `interrupted` acabara sirviendose por la API (#12).
+    """
+    fuente = FakeSource(frames=100)
+    sink = FakeSink()
+    corredor = runner(
+        source=fuente,
+        detector=DetectorQueSenala(en=2),
+        analyzers=(FakeAnalyzer(),),
+        sinks=(sink,),
+    )
+
+    with manejar_sigint(corredor):
+        stats = corredor.run()  # no propaga: apagado limpio, y el CLI saldria con 0
+
+    assert stats.interrupted is True
+    assert "interrumpida" in stats.summary()
+    assert stats.frames == 3  # el fotograma en curso se termina entero
+    assert fuente.cierres == 1
+    assert sink.flushes == 1
+    assert hilos_de_la_fuente() == []
+
+
+def test_dos_sigint_de_verdad_a_mitad_del_bucle_abortan_en_vez_de_apagar_ordenadamente() -> None:
+    """Los dos Ctrl+C caen **dentro del bucle**, que es donde caen casi siempre.
+
+    El proceso se pasa el 71 % del tiempo esperando fotograma (`_docs/rendimiento.md`), asi
+    que la ventana no es estrecha. El aborto tiene que escaparse de `run()` y llegar al CLI
+    como tal; si algo lo convierte en un apagado ordenado, el usuario pulsa dos veces y el
+    programa le contesta con un 0 educado mientras sigue apagando.
+    """
+    fuente = FakeSource(frames=100)
+    sink = FakeSink()
+    corredor = runner(
+        source=fuente,
+        detector=DetectorQueSenala(en=1, veces=2),
+        analyzers=(FakeAnalyzer(),),
+        sinks=(sink,),
+    )
+
+    with manejar_sigint(corredor), pytest.raises(AbortRequested):
+        corredor.run()
+
+    # El fotograma 1 no llega a procesarse: se aborta dentro de su `detect()`.
+    assert corredor.stats.frames == 1
+    assert corredor.stats.interrupted is True
+    # Abortar no es dejarlo todo tirado: si el cierre es rapido se cierra igual. Lo que no
+    # se hace es seguir procesando ni esperar a un apagado que podria estar colgado.
+    assert fuente.cierres == 1
+    assert hilos_de_la_fuente() == []
+
+
+class DetectorQueSenalaDosVeces(DetectorQueSenala):
+    """El de arriba con los parametros fijados, para poder registrarlo como un bloque."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(en=1, veces=2, **kwargs)
+
+
+def test_el_aborto_se_escapa_de_run_project_entero_y_no_solo_de_run(tmp_path: Path) -> None:
+    """El camino completo del CLI: `run_project` pone el manejador y corre el bucle.
+
+    Si el aborto se quedara dentro, `cvp run` saldria con 0 y el usuario habria pulsado dos
+    veces Ctrl+C para que le contestaran que todo fue bien.
+    """
+    config = configuracion(tmp_path, analyzers=[], sinks=[])
+
+    with pytest.raises(AbortRequested):
+        run_project(
+            config,
+            registries=registros(detector=DetectorQueSenalaDosVeces),
+            clock=RelojFalso(),
+            timer=CronometroFalso(),
+            sleeper=lambda _s: None,
+        )
+
+    assert FakeSource.ultima.cierres == 1
+    assert hilos_de_la_fuente() == []
 
 
 # --------------------------------------------------------------------------------------
