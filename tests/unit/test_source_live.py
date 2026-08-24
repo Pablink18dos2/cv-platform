@@ -26,6 +26,7 @@ from cvp.sources.live import (
 )
 
 INICIO = datetime(2026, 8, 24, 12, 0, tzinfo=UTC)
+NATIVO = 30.0
 # Tope de seguridad de las esperas sobre eventos: si el codigo es correcto se cumplen en
 # microsegundos, y si no lo es el test falla en vez de colgar la suite.
 ESPERA_MAXIMA_S = 2.0
@@ -229,8 +230,16 @@ def test_el_muestreo_baja_a_lo_que_el_consumidor_sostiene(
     reloj.avanzar(4)
     with caplog.at_level(logging.INFO):
         assert linea.realimentar(tomados=15, fondo=0) is True
-    assert linea.tasa_efectiva == pytest.approx(3.75)
+    # No salta de 5 a 3,75 de una vez: baja como mucho un 15 % por ventana, para no
+    # perseguir el ruido del detector, cuyo p95 es cuatro veces su mediana.
+    assert linea.tasa_efectiva == pytest.approx(5.0 * 0.85)
     assert "sostiene 3.75" in caplog.text
+
+    # Una ventana mas y ya esta en lo que el consumidor sostiene.
+    _seleccionados(linea, 120)
+    reloj.avanzar(4)
+    linea.realimentar(tomados=30, fondo=0)
+    assert linea.tasa_efectiva == pytest.approx(3.75)
 
 
 def test_con_la_tasa_ajustada_los_huecos_salen_repartidos() -> None:
@@ -242,11 +251,12 @@ def test_con_la_tasa_ajustada_los_huecos_salen_repartidos() -> None:
 
     marcas = [marca for _, marca in _seleccionados(linea, 300)]
     huecos = [(b - a).total_seconds() for a, b in zip(marcas[:-1], marcas[1:], strict=True)]
-    # 3,75 fps sobre 30 nativos es uno de cada ocho: 266 ms de mediana, y lo peor que
-    # hace el cambio de tasa es estirar un hueco un fotograma. Nada que se parezca al
-    # 1,2 s de tirar un bloque entero.
-    assert sorted(huecos)[len(huecos) // 2] == pytest.approx(8 / 30, abs=1e-5)
-    assert max(huecos) <= 9 / 30
+    # Los huecos salen del periodo de la tasa nueva, redondeados al fotograma nativo mas
+    # cercano, y lo peor que hace el cambio de tasa es estirar uno un fotograma. Nada que
+    # se parezca al 1,2 s de tirar un bloque entero.
+    cada = round(NATIVO / linea.tasa_efectiva)
+    assert sorted(huecos)[len(huecos) // 2] == pytest.approx(cada / NATIVO, abs=1e-5)
+    assert max(huecos) <= (cada + 1) / NATIVO + 1e-5
 
 
 def test_el_retraso_que_no_se_va_solo_se_descuenta_del_muestreo() -> None:
@@ -257,9 +267,24 @@ def test_el_retraso_que_no_se_va_solo_se_descuenta_del_muestreo() -> None:
     linea.realimentar(tomados=0, fondo=0)
     _seleccionados(linea, 120)
     reloj.avanzar(4)
-    linea.realimentar(tomados=15, fondo=5)
-    # 3,75 de capacidad menos los cinco atascados, que hay que drenar en una ventana.
-    assert linea.tasa_efectiva == pytest.approx(2.5)
+    # Dos fuentes identicas salvo por los cinco fotogramas atascados en el valle del
+    # buffer: la que los tiene muestrea mas bajo, para drenarlos.
+    con_retraso, sin_retraso = [], []
+    for fondo, donde in ((5, con_retraso), (0, sin_retraso)):
+        linea, reloj = _linea(target_fps=5.0)
+        tomados = 0
+        for _ in range(4):
+            linea.realimentar(tomados=tomados, fondo=fondo)
+            tomados += 15
+            _seleccionados(linea, 120)
+            reloj.avanzar(4)
+        linea.realimentar(tomados=tomados, fondo=fondo)
+        donde.append(linea.tasa_efectiva)
+
+    assert con_retraso[0] < sin_retraso[0]
+    # El drenaje ajusta, no hunde: drenarlo de golpe mandaba el muestreo al suelo en
+    # cuanto el arranque dejaba el buffer lleno, y costaba un tercio de los fps.
+    assert con_retraso[0] > sin_retraso[0] * 0.7
 
 
 def test_el_muestreo_vuelve_a_subir_cuando_el_consumidor_da_abasto() -> None:
@@ -268,13 +293,15 @@ def test_el_muestreo_vuelve_a_subir_cuando_el_consumidor_da_abasto() -> None:
     _seleccionados(linea, 120)
     reloj.avanzar(4)
     linea.realimentar(tomados=15, fondo=0)
-    assert linea.tasa_efectiva == pytest.approx(3.75)
+    tasa_baja = linea.tasa_efectiva
+    assert tasa_baja < 5.0
 
-    # Ahora se lleva los 15 que se le ofrecen y el buffer se queda vacio.
+    # Ahora se lleva todo lo que se le ofrece y el buffer se queda vacio.
     _seleccionados(linea, 120)
     reloj.avanzar(4)
-    linea.realimentar(tomados=30, fondo=0)
-    assert linea.tasa_efectiva == pytest.approx(3.75 * 1.25)
+    linea.realimentar(tomados=99, fondo=0)
+    assert linea.tasa_efectiva == pytest.approx(min(tasa_baja * 1.25, 5.0))
+    assert linea.tasa_efectiva > tasa_baja
 
 
 def test_el_muestreo_no_pasa_del_target_por_mucho_margen_que_haya() -> None:
@@ -301,12 +328,17 @@ def test_una_ventana_sin_consumo_no_cuenta() -> None:
 
 def test_el_muestreo_no_baja_del_suelo_aunque_el_consumidor_se_atasque() -> None:
     linea, reloj = _linea(target_fps=5.0)
-    linea.realimentar(tomados=0, fondo=0)
-    _seleccionados(linea, 120)
-    reloj.avanzar(4)
-    linea.realimentar(tomados=1, fondo=20)
-    # 0,25 fps de capacidad menos 5 de drenaje daria negativo: se queda en el suelo.
-    assert linea.tasa_efectiva == pytest.approx(0.5)
+    tomados = 0
+    for _ in range(30):
+        linea.realimentar(tomados=tomados, fondo=20)
+        _seleccionados(linea, 120)
+        reloj.avanzar(4)
+        tomados += 1  # un fotograma cada cuatro segundos: la maquina esta atascada
+    linea.realimentar(tomados=tomados, fondo=20)
+    # Por mucho que se baje ventana tras ventana, no se deja de muestrear del todo: sin
+    # suelo, un consumidor atascado dejaria la fuente muda y no habria con que volver.
+    assert linea.tasa_efectiva >= 0.5
+    assert linea.tasa_efectiva < 1.0
 
 
 def test_antes_de_que_pase_la_ventana_no_se_ajusta_nada() -> None:

@@ -57,14 +57,21 @@ ESPERA_DE_CIERRE_S = 5.0
 # La escalera de esperas por defecto, la misma que el modelo `Reconnect` de #3.
 BACKOFF_POR_DEFECTO = (1.0, 2.0, 5.0, 15.0, 30.0, 60.0)
 
-# Cuanto video puede quedar esperando por delante del analisis. Es el ancho de la rafaga
-# que hay que absorber: los segmentos de la fuente del proyecto 01 traen ~4,8 s de video y
-# dejan ~3,1 s de silencio detras (`_docs/rendimiento.md`), asi que por debajo de ~3 s el
-# analisis se vuelve a quedar parado entre segmento y segmento.
+# Cuanto video puede quedar esperando por delante del analisis. Tiene que caber **un
+# segmento entero y sobrar**: los de la fuente del proyecto 01 traen ~4,8 s de video de
+# golpe (`_docs/rendimiento.md`), asi que con 4 s una sola rafaga llenaba el buffer ella
+# sola y el fotograma siguiente ya desalojaba, aunque el consumidor fuera al dia. Eso era
+# un bloque contiguo tirado de la cabeza de la cola, o sea un hueco en la serie temporal,
+# antes de que la realimentacion hubiera tenido tiempo de medir nada.
 #
-# Cuesta memoria y conviene decirlo: 4 s a `target_fps: 5` son 20 fotogramas, y a 1080p
-# eso son ~124 MB. Es el precio de no estar parado el 71 % del tiempo.
-MAX_BACKLOG_S = 4.0
+# Con 8 s la rafaga entra entera y queda margen para el ciclo siguiente, que es todo lo
+# que hace falta: el retraso **tipico** no lo fija este numero sino el muestreo adaptativo,
+# que lo lleva a cero; esto es solo el tope de un transitorio.
+#
+# Cuesta memoria y conviene decirlo: lo que de verdad se guarda es una rafaga, ~20
+# fotogramas, que a 1080p son ~124 MB. El tope solo se toca si el analisis se para del
+# todo 8 s seguidos.
+MAX_BACKLOG_S = 8.0
 
 # Cuanto puede quedarse el tiempo de video por detras del reloj antes de re-anclar. Tiene
 # que estar bastante por encima de la oscilacion normal del transporte (dentro de un ciclo
@@ -87,6 +94,22 @@ SUBIDA_POR_VENTANA = 1.25
 # Suelo del muestreo adaptativo, como fraccion del `target_fps`. Un consumidor atascado
 # mediria cero y sin suelo dejariamos de muestrear del todo, que es peor que ir lento.
 SUELO_DEL_MUESTREO = 0.1
+
+# En cuantas ventanas se drena el retraso que no se va solo, y cuanto puede recortar ese
+# drenaje por debajo de la capacidad medida. Drenarlo de una vez -que es lo que hacia la
+# primera version- hunde el muestreo en cuanto hay un arranque con el buffer lleno: medido
+# contra el directo, la primera ventana lo mandaba de 5 fps al suelo de 0,5 y tardaba
+# minutos en volver a subir, con 2,47 fps de salida en vez de 3,7.
+DRENAJE_EN_VENTANAS = 4.0
+
+# Margen antes de dar por bueno que el consumidor no da abasto, y lo mas que se le puede
+# bajar el muestreo en una ventana. El detector tiene un p95 de cuatro veces su mediana
+# (`_docs/rendimiento.md`), asi que en una ventana de 4 s caben dos inferencias lentas que
+# no dicen nada de la capacidad de la maquina. Sin amortiguar, el muestreo persigue ese
+# ruido hacia abajo y no vuelve: medido contra el directo, 35 ajustes en 200 s y 2,85 fps
+# de salida en vez de los 3,7 que da la maquina.
+HOLGURA_DE_CONSUMO = 0.9
+BAJADA_MAXIMA = 0.85
 
 
 class Snapshot(NamedTuple):
@@ -263,7 +286,7 @@ class VideoTimeline:
                 consumidos / transcurrido,
                 fondo=fondo,
                 transcurrido=transcurrido,
-                sostiene=consumidos >= ofrecidos and fondo <= 1,
+                sostiene=consumidos >= ofrecidos * HOLGURA_DE_CONSUMO,
             )
         self._abrir_ventana(ahora, tomados)
         return True
@@ -278,9 +301,15 @@ class VideoTimeline:
     ) -> None:
         """Baja el muestreo a lo que el consumidor aguanta, y lo sube a tientas si sobra."""
         suelo = self.target_fps * SUELO_DEL_MUESTREO
-        propuesta = (
-            self._tasa * SUBIDA_POR_VENTANA if sostiene else sostenido - fondo / transcurrido
-        )
+        # Si el consumidor se lleva lo que se le ofrece, se tantea hacia arriba; si no, se
+        # apunta a la capacidad que ha demostrado. En los dos casos se descuenta lo que se
+        # haya quedado esperando, porque un retraso que no se drena acaba desbordando el
+        # buffer y volviendo al bloque descartado de golpe. Y en los dos casos hay tope a
+        # lo que se puede bajar de una vez: el p95 del detector es cuatro veces su mediana,
+        # asi que una ventana mala no dice lo que la maquina sostiene.
+        objetivo = self._tasa * SUBIDA_POR_VENTANA if sostiene else sostenido
+        drenaje = fondo / (transcurrido * DRENAJE_EN_VENTANAS)
+        propuesta = max(objetivo - drenaje, BAJADA_MAXIMA * self._tasa)
         nueva = min(max(propuesta, suelo), self.target_fps)
         if abs(nueva - self._tasa) < 0.01 * self.target_fps:
             return
