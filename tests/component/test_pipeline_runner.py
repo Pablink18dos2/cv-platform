@@ -838,6 +838,53 @@ def test_dos_sigint_de_verdad_a_mitad_del_bucle_abortan_en_vez_de_apagar_ordenad
     assert hilos_de_la_fuente() == []
 
 
+class SinkQueSenala(FakeSink):
+    """Sink que se lleva los dos Ctrl+C dentro de su propio `write()`.
+
+    `_escribir` envuelve cada escritura en un `except Exception` para que un sink roto no
+    tumbe el worker, y ese `except` es la **segunda puerta** por la que el aborto podria
+    volver al camino ordenado. Es la simetrica de la que fallo en la primera vuelta: alli
+    era el `except KeyboardInterrupt`, aqui seria el `except Exception`.
+    """
+
+    def __init__(self, *, veces: int = 2, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.veces = veces
+
+    def write(self, run_id: str, output: AnalyzerOutput) -> None:
+        for _ in range(self.veces):
+            signal.raise_signal(signal.SIGINT)
+        super().write(run_id, output)
+
+
+def test_el_aborto_tampoco_se_lo_traga_el_except_que_protege_a_los_sinks() -> None:
+    """La otra mitad del requisito: `AbortRequested` no puede ser un `Exception`.
+
+    Los tests de arriba prueban que no la caza el `except KeyboardInterrupt` del apagado
+    ordenado. Falta la puerta simetrica: si derivara de `Exception`, dos Ctrl+C que cayeran
+    dentro de una escritura los tragaria el `except Exception` de `_escribir`, se apuntarian
+    como un error de sink, el bucle seguiria tan tranquilo y el usuario recibiria un exit 0.
+    Seria el fallo de la primera vuelta entrando por otra puerta.
+    """
+    fuente = FakeSource(frames=100)
+    senalador = SinkQueSenala(name="el-que-recibe-el-ctrl-c")
+    siguiente = FakeSink(name="el-de-detras")
+    corredor = runner(source=fuente, analyzers=(FakeAnalyzer(),), sinks=(senalador, siguiente))
+
+    with manejar_sigint(corredor), pytest.raises(AbortRequested):
+        corredor.run()
+
+    # Un aborto no es un fallo de escritura y no puede contarse como tal: si aparece aqui un
+    # 1, es que alguien se lo ha comido y lo ha apuntado en la columna equivocada.
+    assert corredor.stats.sink_errors == 0
+    assert corredor.stats.sink_writes == 0
+    # Y el bucle se para de verdad: el sink de detras no llega a recibir esta salida.
+    assert siguiente.escrituras == []
+    assert corredor.stats.frames == 1
+    assert fuente.cierres == 1
+    assert hilos_de_la_fuente() == []
+
+
 class DetectorQueSenalaDosVeces(DetectorQueSenala):
     """El de arriba con los parametros fijados, para poder registrarlo como un bloque."""
 
