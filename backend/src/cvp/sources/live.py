@@ -57,14 +57,21 @@ ESPERA_DE_CIERRE_S = 5.0
 # La escalera de esperas por defecto, la misma que el modelo `Reconnect` de #3.
 BACKOFF_POR_DEFECTO = (1.0, 2.0, 5.0, 15.0, 30.0, 60.0)
 
-# Cuanto video puede quedar esperando por delante del analisis. Es el ancho de la rafaga
-# que hay que absorber: los segmentos de la fuente del proyecto 01 traen ~4,8 s de video y
-# dejan ~3,1 s de silencio detras (`_docs/rendimiento.md`), asi que por debajo de ~3 s el
-# analisis se vuelve a quedar parado entre segmento y segmento.
+# Cuanto video puede quedar esperando por delante del analisis. Tiene que caber **un
+# segmento entero y sobrar**: los de la fuente del proyecto 01 traen ~4,8 s de video de
+# golpe (`_docs/rendimiento.md`), asi que con 4 s una sola rafaga llenaba el buffer ella
+# sola y el fotograma siguiente ya desalojaba, aunque el consumidor fuera al dia. Eso era
+# un bloque contiguo tirado de la cabeza de la cola, o sea un hueco en la serie temporal,
+# antes de que la realimentacion hubiera tenido tiempo de medir nada.
 #
-# Cuesta memoria y conviene decirlo: 4 s a `target_fps: 5` son 20 fotogramas, y a 1080p
-# eso son ~124 MB. Es el precio de no estar parado el 71 % del tiempo.
-MAX_BACKLOG_S = 4.0
+# Con 8 s la rafaga entra entera y queda margen para el ciclo siguiente, que es todo lo
+# que hace falta: el retraso **tipico** no lo fija este numero sino el muestreo adaptativo,
+# que lo lleva a cero; esto es solo el tope de un transitorio.
+#
+# Cuesta memoria y conviene decirlo: lo que de verdad se guarda es una rafaga, ~20
+# fotogramas, que a 1080p son ~124 MB. El tope solo se toca si el analisis se para del
+# todo 8 s seguidos.
+MAX_BACKLOG_S = 8.0
 
 # Cuanto puede quedarse el tiempo de video por detras del reloj antes de re-anclar. Tiene
 # que estar bastante por encima de la oscilacion normal del transporte (dentro de un ciclo
@@ -72,6 +79,37 @@ MAX_BACKLOG_S = 4.0
 # por debajo de lo que deformaria una agregacion por minuto. 30 s es ademas el orden de la
 # latencia que ya trae un directo por HLS, que es incertidumbre que no podemos medir.
 MAX_DERIVA_S = 30.0
+
+# Cada cuanto (de reloj) se mira si el analisis sostiene el ritmo y se ajusta el muestreo.
+# Es del orden de un ciclo de segmento HLS: mas corto reaccionaria al ruido de una rafaga,
+# mas largo tardaria en enterarse de que la maquina ya no da abasto.
+VENTANA_DE_AJUSTE_S = 4.0
+
+# Cuanto se sube el muestreo por ventana en la que el consumidor va sobrado, hasta el
+# `target_fps` pedido. La bajada es de golpe a lo que sostiene y la subida a tientas, que
+# es la asimetria de siempre: pasarse por arriba se paga en huecos y quedarse corto solo
+# en fotogramas que no se miran.
+SUBIDA_POR_VENTANA = 1.25
+
+# Suelo del muestreo adaptativo, como fraccion del `target_fps`. Un consumidor atascado
+# mediria cero y sin suelo dejariamos de muestrear del todo, que es peor que ir lento.
+SUELO_DEL_MUESTREO = 0.1
+
+# En cuantas ventanas se drena el retraso que no se va solo, y cuanto puede recortar ese
+# drenaje por debajo de la capacidad medida. Drenarlo de una vez -que es lo que hacia la
+# primera version- hunde el muestreo en cuanto hay un arranque con el buffer lleno: medido
+# contra el directo, la primera ventana lo mandaba de 5 fps al suelo de 0,5 y tardaba
+# minutos en volver a subir, con 2,47 fps de salida en vez de 3,7.
+DRENAJE_EN_VENTANAS = 4.0
+
+# Margen antes de dar por bueno que el consumidor no da abasto, y lo mas que se le puede
+# bajar el muestreo en una ventana. El detector tiene un p95 de cuatro veces su mediana
+# (`_docs/rendimiento.md`), asi que en una ventana de 4 s caben dos inferencias lentas que
+# no dicen nada de la capacidad de la maquina. Sin amortiguar, el muestreo persigue ese
+# ruido hacia abajo y no vuelve: medido contra el directo, 35 ajustes en 200 s y 2,85 fps
+# de salida en vez de los 3,7 que da la maquina.
+HOLGURA_DE_CONSUMO = 0.9
+BAJADA_MAXIMA = 0.85
 
 
 class Snapshot(NamedTuple):
@@ -129,15 +167,17 @@ class VideoTimeline:
         self.max_drift_s = float(max_drift_s)
         self._clock = clock
         self._nombre = nombre
+        self._tasa = self.target_fps
         self._periodo = timedelta(seconds=1.0 / self.target_fps)
-        # Capado a 1: pedir mas fps de los que trae el video no duplica fotogramas.
-        self._ratio = (
-            1.0 if self.native_fps is None else min(self.target_fps / self.native_fps, 1.0)
-        )
         self._ancla: datetime | None = None
         self._decodificados = 0
         self._ultimo: datetime | None = None
+        self._proximo: datetime | None = None
         self._aviso_de_adelanto = False
+        self._seleccionados = 0
+        self._inicio_de_ventana: datetime | None = None
+        self._tomados_al_abrir = 0
+        self._seleccionados_al_abrir = 0
         if self.native_fps is None:
             _log.warning(
                 "%s no declara frame rate, asi que no hay tiempo de video que derivar: se "
@@ -164,6 +204,9 @@ class VideoTimeline:
             ancla = self._ultimo + self._periodo
         self._ancla = ancla
         self._decodificados = 0
+        # La rejilla de muestreo se recoloca sobre el ancla nueva: el primer fotograma que
+        # llegue detras de una caida sale, en vez de esperar a cuadrar con la rejilla vieja.
+        self._proximo = None
         self._aviso_de_adelanto = False
         _log.info("%s: tiempo de video anclado a %s (%s)", self._nombre, ancla.isoformat(), motivo)
 
@@ -179,12 +222,109 @@ class VideoTimeline:
             self.anclar("primer fotograma")
         n = self._decodificados
         self._decodificados = n + 1
-        if n and int(n * self._ratio) == int((n - 1) * self._ratio):
-            return None
         assert self._ancla is not None
-        marca = self._vigilar_deriva(self._ancla + timedelta(seconds=n / self.native_fps))
+        marca = self._ancla + timedelta(seconds=n / self.native_fps)
+        if self._proximo is not None and marca < self._proximo:
+            return None
+        marca = self._vigilar_deriva(marca)
         self._ultimo = marca
+        self._seleccionados += 1
+        # El objetivo se acumula, no se recoloca sobre el fotograma que ha salido: es lo
+        # que mantiene la tasa exacta cuando `target_fps` no divide al nativo (7 sobre 30
+        # da huecos de 4 y 5 fotogramas, no de 5 siempre). Y si se ha quedado atras -un
+        # hueco del transporte, o mas fps pedidos de los que trae el video- se recoloca,
+        # que es lo que evita una rafaga de recuperacion despues de un paron.
+        self._proximo = (self._proximo or marca) + self._periodo
+        if self._proximo <= marca:
+            self._proximo = marca + self._periodo
         return marca
+
+    @property
+    def tasa_efectiva(self) -> float:
+        """Los fotogramas por segundo de video que se estan muestreando de verdad."""
+        return self._tasa
+
+    def realimentar(self, *, tomados: int, fondo: int) -> bool:
+        """Le cuenta a la linea como le va al consumidor. Una vez por fotograma emitido.
+
+        Sin esto, pedir 5 fps a una maquina que sostiene 3,7 no da 3,7 fps repartidos: da
+        5 seleccionados, un buffer que se llena y un **bloque contiguo** descartado por
+        ciclo de segmento, o sea 200 ms, 200 ms, 200 ms y de pronto 1,2 s. La mediana sale
+        perfecta y la serie esta rota, que es el fallo silencioso que este issue existe
+        para quitar. Muestreando a lo que el consumidor sostiene, los huecos salen
+        regulares y no hay nada que descartar.
+
+        Lo que se compara es **cuantos se ofrecieron y cuantos se consumieron** en la
+        ventana, no si el buffer ha desbordado: para cuando desborda, el bloque ya se ha
+        tirado y el hueco ya esta en la serie. Y no vale mirar cuanto ocupa el buffer,
+        porque con un transporte a rafagas se llena por definicion cada segmento aunque
+        el consumidor vaya sobrado.
+
+        `fondo` es el retraso que no se va solo (el valle del buffer). Sin restarlo, cada
+        tanteo hacia arriba dejaria unos fotogramas de mas esperando y el retraso crearia
+        hasta desbordar, que es volver al mismo bloque descartado de golpe por otro camino.
+
+        La medida es en **tiempo de reloj** y no de video a proposito: lo que se estima es
+        la capacidad del consumidor, y esa no cambia porque el transporte entregue de
+        golpe 30 s de video al arrancar. Una ventana en la que el consumidor no ha tocado
+        nada no cuenta: es la del arranque, mientras el detector carga los pesos.
+
+        Devuelve `True` cuando ha cerrado una ventana, que es cuando hay que volver a
+        empezar a medir el valle.
+        """
+        ahora = self._clock()
+        if self._inicio_de_ventana is None:
+            self._abrir_ventana(ahora, tomados)
+            return True
+        transcurrido = (ahora - self._inicio_de_ventana).total_seconds()
+        if transcurrido < VENTANA_DE_AJUSTE_S:
+            return False
+        consumidos = tomados - self._tomados_al_abrir
+        ofrecidos = self._seleccionados - self._seleccionados_al_abrir
+        if consumidos > 0:
+            self._ajustar(
+                consumidos / transcurrido,
+                fondo=fondo,
+                transcurrido=transcurrido,
+                sostiene=consumidos >= ofrecidos * HOLGURA_DE_CONSUMO,
+            )
+        self._abrir_ventana(ahora, tomados)
+        return True
+
+    def _abrir_ventana(self, ahora: datetime, tomados: int) -> None:
+        self._inicio_de_ventana = ahora
+        self._tomados_al_abrir = tomados
+        self._seleccionados_al_abrir = self._seleccionados
+
+    def _ajustar(
+        self, sostenido: float, *, fondo: int, transcurrido: float, sostiene: bool
+    ) -> None:
+        """Baja el muestreo a lo que el consumidor aguanta, y lo sube a tientas si sobra."""
+        suelo = self.target_fps * SUELO_DEL_MUESTREO
+        # Si el consumidor se lleva lo que se le ofrece, se tantea hacia arriba; si no, se
+        # apunta a la capacidad que ha demostrado. En los dos casos se descuenta lo que se
+        # haya quedado esperando, porque un retraso que no se drena acaba desbordando el
+        # buffer y volviendo al bloque descartado de golpe. Y en los dos casos hay tope a
+        # lo que se puede bajar de una vez: el p95 del detector es cuatro veces su mediana,
+        # asi que una ventana mala no dice lo que la maquina sostiene.
+        objetivo = self._tasa * SUBIDA_POR_VENTANA if sostiene else sostenido
+        drenaje = fondo / (transcurrido * DRENAJE_EN_VENTANAS)
+        propuesta = max(objetivo - drenaje, BAJADA_MAXIMA * self._tasa)
+        nueva = min(max(propuesta, suelo), self.target_fps)
+        if abs(nueva - self._tasa) < 0.01 * self.target_fps:
+            return
+        _log.info(
+            "%s: el analisis sostiene %.2f fps, asi que se muestrea a %.2f en vez de a "
+            "%.2f (pedidos %.2f). Ajustar la tasa reparte los huecos en vez de tirar "
+            "bloques enteros cuando el buffer se llena",
+            self._nombre,
+            sostenido,
+            nueva,
+            self._tasa,
+            self.target_fps,
+        )
+        self._tasa = nueva
+        self._periodo = timedelta(seconds=1.0 / nueva)
 
     def _muestrear_por_reloj(self) -> datetime | None:
         """El plan B de `native_fps=None`: se muestrea y se marca con el reloj de pared."""
@@ -246,18 +386,45 @@ class RecentFrameBuffer:
     indices de origen saltan, que es la forma correcta de ir con menos fotogramas.
     """
 
-    def __init__(self, maxlen: int) -> None:
-        if maxlen < 1:
-            raise ValueError(f"el buffer tiene que caber al menos un fotograma, no {maxlen!r}")
+    def __init__(self, ventana_s: float) -> None:
+        if ventana_s <= 0:
+            raise ValueError(f"la ventana del buffer debe ser > 0 s, no {ventana_s!r}")
         self._condicion = threading.Condition()
-        self._cola: deque[Snapshot] = deque(maxlen=maxlen)
+        self._cola: deque[Snapshot] = deque()
+        self._ventana = timedelta(seconds=ventana_s)
         self._descartados = 0
+        self._tomados = 0
+        self._fondo = 0
         self._error: SourceError | None = None
         self._cerrada = False
 
     @property
-    def maxlen(self) -> int:
-        return self._cola.maxlen or 0
+    def ventana_s(self) -> float:
+        """Cuanto video puede haber esperando entre el mas viejo y el mas nuevo."""
+        return self._ventana.total_seconds()
+
+    @property
+    def tomados(self) -> int:
+        """Cuantos fotogramas ha consumido el analisis. Es la medida de si da abasto."""
+        with self._condicion:
+            return self._tomados
+
+    @property
+    def fondo(self) -> int:
+        """Lo mas vacio que ha llegado a estar el buffer desde el ultimo `reiniciar_fondo`.
+
+        Es el retraso que **no se va solo**. Mirar cuanto ocupa el buffer sin mas no sirve
+        con un transporte a rafagas, porque cada segmento lo llena por definicion aunque el
+        consumidor vaya sobrado; lo que queda en el valle entre rafaga y rafaga es lo que
+        el consumidor no ha conseguido drenar.
+        """
+        with self._condicion:
+            return self._fondo
+
+    def reiniciar_fondo(self) -> None:
+        """Empieza a medir el valle otra vez. Lo llama quien cierra una ventana de ajuste."""
+        with self._condicion:
+            self._fondo = len(self._cola)
 
     @property
     def descartados(self) -> int:
@@ -270,17 +437,28 @@ class RecentFrameBuffer:
             return len(self._cola)
 
     def publicar(self, imagen: np.ndarray, marca: datetime) -> bool:
-        """Encola un fotograma. Devuelve `True` si ha habido que descartar el mas antiguo."""
+        """Encola un fotograma. Devuelve `True` si ha habido que descartar el mas antiguo.
+
+        El tope es **tiempo de video**, no un numero de fotogramas: lo que hay que acotar
+        es cuanto puede ir el analisis por detras del directo, y eso solo coincide con un
+        numero de fotogramas mientras la separacion entre ellos sea la que se supone. Con
+        `native_fps` por debajo de `target_fps` deja de serlo, y un tope de 20 fotogramas
+        que se creia de 4 s pasaba a ser de 19 s sin que nada lo dijera.
+        """
         with self._condicion:
             if self._cerrada:
                 return False
-            lleno = len(self._cola) == self._cola.maxlen
-            if lleno:
-                self._descartados += 1
-            # `deque` con `maxlen` descarta el mas antiguo por su cuenta al desbordar.
             self._cola.append(Snapshot(imagen, marca))
+            descarto = False
+            while len(self._cola) > 1 and self._cola[-1].timestamp - self._cola[0].timestamp > (
+                self._ventana
+            ):
+                self._cola.popleft()
+                self._descartados += 1
+                descarto = True
+            self._fondo = min(self._fondo, len(self._cola))
             self._condicion.notify_all()
-            return lleno
+            return descarto
 
     def tomar(self, *, timeout: float | None = None) -> Snapshot | None:
         """El fotograma mas antiguo que quede, esperando si no hay ninguno.
@@ -296,7 +474,10 @@ class RecentFrameBuffer:
             if self._error is not None:
                 raise self._error
             if self._cola:
-                return self._cola.popleft()
+                self._tomados += 1
+                instantanea = self._cola.popleft()
+                self._fondo = min(self._fondo, len(self._cola))
+                return instantanea
             return None
 
     def fallar(self, error: SourceError) -> None:
@@ -396,11 +577,6 @@ class LiveVideoSource:
         # mismo despues de una caida.
         self._indice = 0
 
-    @property
-    def profundidad_del_buffer(self) -> int:
-        """Cuantos fotogramas seleccionados caben esperando al analisis."""
-        return max(1, round(self.max_backlog_s * self.target_fps))
-
     # --- Contrato de `VideoSource` ----------------------------------------------------
 
     @property
@@ -431,7 +607,7 @@ class LiveVideoSource:
             nombre=self._descripcion(),
         )
         linea.anclar("apertura")
-        buffer = RecentFrameBuffer(self.profundidad_del_buffer)
+        buffer = RecentFrameBuffer(self.max_backlog_s)
         self._linea = linea
         self._buffer = buffer
         self._hilo = threading.Thread(
@@ -610,6 +786,10 @@ class LiveVideoSource:
                         self.target_fps,
                         self.max_backlog_s,
                     )
+                # Y con eso se ajusta el muestreo: si el consumidor no da abasto, mas vale
+                # seleccionar menos y repartido que seleccionar de mas y tirar bloques.
+                if linea.realimentar(tomados=buffer.tomados, fondo=buffer.fondo):
+                    buffer.reiniciar_fondo()
         except Exception as exc:  # pragma: no cover - red de seguridad del hilo
             _log.exception("el hilo lector de %s ha muerto", self._descripcion())
             buffer.fallar(SourceError(f"el hilo lector de {self._descripcion()} ha muerto: {exc}"))

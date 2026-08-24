@@ -326,7 +326,8 @@ ejecucion 20260824T143606Z-247b8a86
 ```
 
 **La fuente ha dejado de ser el cuello de botella.** Esperarla costaba 830 ms de cada
-fotograma —el 66 % del presupuesto— y ahora cuesta entre 3,6 y 6,9 ms, un 0,2 %. El p95 pasa de
+fotograma —el 66 % del presupuesto— y ahora cuesta entre 3,6 y 6,9 ms, entre el 1,3 % y el
+2,6 % de los 262-271 ms que dura un fotograma. El p95 pasa de
 3,3 s a 0,1 ms: ya no hay huecos de cuatro segundos entre ráfagas.
 
 ## Los timestamps, que eran la parte grave
@@ -394,7 +395,7 @@ límite, y solo hacen falta 30.
 3,7-3,8 fps son **4,4 veces** los 0,85 de #8, y aun así se quedan por debajo de los 5 fps que
 pide el tracker de tráfico del plan, y por debajo de los 4 fps que pedía el criterio de #23.
 El desglose dice exactamente dónde está el techo: la media del detector es de 252-265 ms, o sea
-3,8-4,0 fps, y la espera de la fuente es el 0,2 % del presupuesto. **El cuello de botella se ha
+3,8-4,0 fps, y la espera de la fuente es el 2,6 % del presupuesto. **El cuello de botella se ha
 movido de la fuente al detector.**
 
 Es un resultado, no un fracaso a medias: hasta ahora optimizar el modelo no habría comprado
@@ -407,3 +408,46 @@ análisis no sostiene los 5 fps pedidos**, así que el buffer del connector va l
 los fotogramas más antiguos. El retraso respecto al directo se queda en los 4 s del buffer y no
 crece, que es lo que se quería, pero mientras el detector no baje de 200 ms el `target_fps: 5`
 del proyecto está pidiendo más de lo que la máquina da.
+
+# El muestreo se ajusta a lo que el análisis sostiene (issue #23, segunda ronda)
+
+La primera ronda de #23 arregló el muestreo en tiempo de vídeo, y la verificación encontró que
+seguía habiendo saltos en la serie **en el régimen en el que corre el proyecto**: un consumidor
+más lento que `target_fps`. Los timestamps salían con mediana perfecta de 200 ms y un salto de
+1,2 s por ciclo de segmento.
+
+La causa: pedir 5 fps a una máquina que sostiene 3,7 seleccionaba 5, llenaba el buffer y el
+descarte caía en una **tirada contigua** de la cabeza de la cola, así que al análisis le
+desaparecía un bloque entero de golpe. La mediana no lo veía, y ninguna de las dos mediciones de
+timestamps lo vio porque las dos se tomaron **con el connector solo**, que es la única
+configuración donde el buffer no se llena.
+
+Dos cambios:
+
+- **El muestreo se realimenta.** Cada 4 s se compara cuántos fotogramas se ofrecieron con
+  cuántos consumió el análisis. Si no da abasto, la tasa baja a la que ha demostrado sostener;
+  si va sobrado, sube a tientas hasta el `target_fps` pedido. Así los huecos salen regulares en
+  vez de agrupados, porque no hay nada que descartar.
+- **El buffer pasa de 4 s a 8 s de vídeo.** Con 4 s, una ráfaga de un segmento entero (~4,8 s de
+  vídeo) llenaba el buffer ella sola y el fotograma siguiente ya desalojaba, aunque el consumidor
+  fuera al día. Tiene que caber un segmento y sobrar.
+
+## Lo que cuesta la realimentación: nada medible
+
+La duda razonable era si muestrear por debajo del `target_fps` costaría fps de salida. Medido
+back-to-back contra el directo real, 200 s cada uno, con el controlador puesto y desactivado:
+
+| | fps de salida | espera de la fuente (media) | detector (media) |
+|---|---|---|---|
+| con realimentación | 2,74 | 0,0 ms | 363,5 ms |
+| sin realimentación | 2,80 | 0,0 ms | 355,1 ms |
+
+Es la misma cifra dentro del ruido de la máquina. El throughput lo fija la media del detector,
+no el muestreo: mientras haya un fotograma esperando —y lo hay, la espera de la fuente es de
+0,0 ms en los dos casos— el análisis va a su tope.
+
+**Y cuidado con comparar entre sesiones**: estas dos ejecuciones dan 2,7-2,8 fps donde las de la
+primera ronda daban 3,68-3,82, con el mismo código de fuente y detector. La diferencia está
+entera en el detector (media de 355-363 ms ahora contra 252-265 ms entonces), o sea en el estado
+de la máquina, no en el connector. Por eso la comparación que vale es la de arriba, tomada
+seguida; los números entre secciones distintas de este documento no son comparables.
