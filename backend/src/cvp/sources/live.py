@@ -178,6 +178,8 @@ class VideoTimeline:
         self._inicio_de_ventana: datetime | None = None
         self._tomados_al_abrir = 0
         self._seleccionados_al_abrir = 0
+        self._valle = 0
+        self._ha_arrancado = False
         if self.native_fps is None:
             _log.warning(
                 "%s no declara frame rate, asi que no hay tiempo de video que derivar: se "
@@ -244,7 +246,7 @@ class VideoTimeline:
         """Los fotogramas por segundo de video que se estan muestreando de verdad."""
         return self._tasa
 
-    def realimentar(self, *, tomados: int, fondo: int) -> bool:
+    def realimentar(self, *, tomados: int, pendientes: int) -> None:
         """Le cuenta a la linea como le va al consumidor. Una vez por fotograma emitido.
 
         Sin esto, pedir 5 fps a una maquina que sostiene 3,7 no da 3,7 fps repartidos: da
@@ -260,44 +262,55 @@ class VideoTimeline:
         porque con un transporte a rafagas se llena por definicion cada segmento aunque
         el consumidor vaya sobrado.
 
-        `fondo` es el retraso que no se va solo (el valle del buffer). Sin restarlo, cada
-        tanteo hacia arriba dejaria unos fotogramas de mas esperando y el retraso crearia
-        hasta desbordar, que es volver al mismo bloque descartado de golpe por otro camino.
+        De `pendientes` -lo que hay esperando ahora mismo- lo que interesa es el **valle**
+        de la ventana: el minimo, que es el retraso que no se va solo. El maximo no dice
+        nada, porque con un transporte a rafagas el buffer se llena por definicion cada
+        segmento aunque el consumidor vaya sobrado. Sin descontar el valle, cada tanteo
+        hacia arriba deja unos fotogramas de mas esperando y el retraso crece hasta
+        desbordar, que es volver al bloque descartado de golpe por otro camino.
+
+        El valle se mide **por ventana**, y por eso se reinicia al abrir cada una. Si solo
+        pudiera decrecer, en cuanto el buffer se vaciara una vez el drenaje quedaria muerto
+        para el resto de la ejecucion y nada lo diria: justo el fallo de larga duracion que
+        no se ve mirando la pantalla.
 
         La medida es en **tiempo de reloj** y no de video a proposito: lo que se estima es
         la capacidad del consumidor, y esa no cambia porque el transporte entregue de
-        golpe 30 s de video al arrancar. Una ventana en la que el consumidor no ha tocado
-        nada no cuenta: es la del arranque, mientras el detector carga los pesos.
-
-        Devuelve `True` cuando ha cerrado una ventana, que es cuando hay que volver a
-        empezar a medir el valle.
+        golpe 30 s de video al arrancar.
         """
         ahora = self._clock()
+        if tomados:
+            self._ha_arrancado = True
         if self._inicio_de_ventana is None:
-            self._abrir_ventana(ahora, tomados)
-            return True
+            self._abrir_ventana(ahora, tomados, pendientes)
+            return
+        self._valle = min(self._valle, pendientes)
         transcurrido = (ahora - self._inicio_de_ventana).total_seconds()
         if transcurrido < VENTANA_DE_AJUSTE_S:
-            return False
+            return
         consumidos = tomados - self._tomados_al_abrir
         ofrecidos = self._seleccionados - self._seleccionados_al_abrir
-        if consumidos > 0:
+        # Una ventana sin consumo antes de que el consumidor haya empezado no cuenta: es
+        # la del arranque, mientras el detector carga los pesos. Una despues si cuenta, y
+        # mucho: es un analisis atascado, y seguir muestreando a tope solo gasta CPU en
+        # fotogramas que se van a tirar.
+        if consumidos > 0 or self._ha_arrancado:
             self._ajustar(
                 consumidos / transcurrido,
-                fondo=fondo,
+                valle=self._valle,
                 transcurrido=transcurrido,
                 sostiene=consumidos >= ofrecidos * HOLGURA_DE_CONSUMO,
             )
-        self._abrir_ventana(ahora, tomados)
-        return True
+        self._abrir_ventana(ahora, tomados, pendientes)
 
-    def _abrir_ventana(self, ahora: datetime, tomados: int) -> None:
+    def _abrir_ventana(self, ahora: datetime, tomados: int, pendientes: int) -> None:
         self._inicio_de_ventana = ahora
         self._tomados_al_abrir = tomados
         self._seleccionados_al_abrir = self._seleccionados
+        self._valle = pendientes
 
     def _ajustar(
-        self, sostenido: float, *, fondo: int, transcurrido: float, sostiene: bool
+        self, sostenido: float, *, valle: int, transcurrido: float, sostiene: bool
     ) -> None:
         """Baja el muestreo a lo que el consumidor aguanta, y lo sube a tientas si sobra."""
         suelo = self.target_fps * SUELO_DEL_MUESTREO
@@ -308,7 +321,7 @@ class VideoTimeline:
         # lo que se puede bajar de una vez: el p95 del detector es cuatro veces su mediana,
         # asi que una ventana mala no dice lo que la maquina sostiene.
         objetivo = self._tasa * SUBIDA_POR_VENTANA if sostiene else sostenido
-        drenaje = fondo / (transcurrido * DRENAJE_EN_VENTANAS)
+        drenaje = valle / (transcurrido * DRENAJE_EN_VENTANAS)
         propuesta = max(objetivo - drenaje, BAJADA_MAXIMA * self._tasa)
         nueva = min(max(propuesta, suelo), self.target_fps)
         if abs(nueva - self._tasa) < 0.01 * self.target_fps:
@@ -394,7 +407,6 @@ class RecentFrameBuffer:
         self._ventana = timedelta(seconds=ventana_s)
         self._descartados = 0
         self._tomados = 0
-        self._fondo = 0
         self._error: SourceError | None = None
         self._cerrada = False
 
@@ -408,23 +420,6 @@ class RecentFrameBuffer:
         """Cuantos fotogramas ha consumido el analisis. Es la medida de si da abasto."""
         with self._condicion:
             return self._tomados
-
-    @property
-    def fondo(self) -> int:
-        """Lo mas vacio que ha llegado a estar el buffer desde el ultimo `reiniciar_fondo`.
-
-        Es el retraso que **no se va solo**. Mirar cuanto ocupa el buffer sin mas no sirve
-        con un transporte a rafagas, porque cada segmento lo llena por definicion aunque el
-        consumidor vaya sobrado; lo que queda en el valle entre rafaga y rafaga es lo que
-        el consumidor no ha conseguido drenar.
-        """
-        with self._condicion:
-            return self._fondo
-
-    def reiniciar_fondo(self) -> None:
-        """Empieza a medir el valle otra vez. Lo llama quien cierra una ventana de ajuste."""
-        with self._condicion:
-            self._fondo = len(self._cola)
 
     @property
     def descartados(self) -> int:
@@ -456,7 +451,6 @@ class RecentFrameBuffer:
                 self._cola.popleft()
                 self._descartados += 1
                 descarto = True
-            self._fondo = min(self._fondo, len(self._cola))
             self._condicion.notify_all()
             return descarto
 
@@ -475,9 +469,7 @@ class RecentFrameBuffer:
                 raise self._error
             if self._cola:
                 self._tomados += 1
-                instantanea = self._cola.popleft()
-                self._fondo = min(self._fondo, len(self._cola))
-                return instantanea
+                return self._cola.popleft()
             return None
 
     def fallar(self, error: SourceError) -> None:
@@ -788,8 +780,7 @@ class LiveVideoSource:
                     )
                 # Y con eso se ajusta el muestreo: si el consumidor no da abasto, mas vale
                 # seleccionar menos y repartido que seleccionar de mas y tirar bloques.
-                if linea.realimentar(tomados=buffer.tomados, fondo=buffer.fondo):
-                    buffer.reiniciar_fondo()
+                linea.realimentar(tomados=buffer.tomados, pendientes=len(buffer))
         except Exception as exc:  # pragma: no cover - red de seguridad del hilo
             _log.exception("el hilo lector de %s ha muerto", self._descripcion())
             buffer.fallar(SourceError(f"el hilo lector de {self._descripcion()} ha muerto: {exc}"))

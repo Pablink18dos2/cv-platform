@@ -20,6 +20,7 @@ import pytest
 
 from cvp.sources.errors import SourceError
 from cvp.sources.live import (
+    DRENAJE_EN_VENTANAS,
     RecentFrameBuffer,
     VideoTimeline,
     espera_de_backoff,
@@ -225,11 +226,11 @@ def test_el_muestreo_baja_a_lo_que_el_consumidor_sostiene(
     # seleccionaban 5, el buffer se llenaba y el descarte caia en una tirada contigua de la
     # cabeza. Huecos de 200 ms y de pronto uno de 1,2 s, con la mediana impecable.
     linea, reloj = _linea(target_fps=5.0)
-    assert linea.realimentar(tomados=0, fondo=0) is True
+    linea.realimentar(tomados=0, pendientes=0)
     _seleccionados(linea, 120)  # 4 s de video: 20 ofrecidos
     reloj.avanzar(4)
     with caplog.at_level(logging.INFO):
-        assert linea.realimentar(tomados=15, fondo=0) is True
+        linea.realimentar(tomados=15, pendientes=0)
     # No salta de 5 a 3,75 de una vez: baja como mucho un 15 % por ventana, para no
     # perseguir el ruido del detector, cuyo p95 es cuatro veces su mediana.
     assert linea.tasa_efectiva == pytest.approx(5.0 * 0.85)
@@ -238,16 +239,16 @@ def test_el_muestreo_baja_a_lo_que_el_consumidor_sostiene(
     # Una ventana mas y ya esta en lo que el consumidor sostiene.
     _seleccionados(linea, 120)
     reloj.avanzar(4)
-    linea.realimentar(tomados=30, fondo=0)
+    linea.realimentar(tomados=30, pendientes=0)
     assert linea.tasa_efectiva == pytest.approx(3.75)
 
 
 def test_con_la_tasa_ajustada_los_huecos_salen_repartidos() -> None:
     linea, reloj = _linea(target_fps=5.0)
-    linea.realimentar(tomados=0, fondo=0)
+    linea.realimentar(tomados=0, pendientes=0)
     _seleccionados(linea, 120)
     reloj.avanzar(4)
-    linea.realimentar(tomados=15, fondo=0)
+    linea.realimentar(tomados=15, pendientes=0)
 
     marcas = [marca for _, marca in _seleccionados(linea, 300)]
     huecos = [(b - a).total_seconds() for a, b in zip(marcas[:-1], marcas[1:], strict=True)]
@@ -264,21 +265,21 @@ def test_el_retraso_que_no_se_va_solo_se_descuenta_del_muestreo() -> None:
     # esperando y el retraso crece hasta desbordar: el bloque descartado de golpe vuelve
     # por otro camino.
     linea, reloj = _linea(target_fps=5.0)
-    linea.realimentar(tomados=0, fondo=0)
+    linea.realimentar(tomados=0, pendientes=0)
     _seleccionados(linea, 120)
     reloj.avanzar(4)
     # Dos fuentes identicas salvo por los cinco fotogramas atascados en el valle del
     # buffer: la que los tiene muestrea mas bajo, para drenarlos.
     con_retraso, sin_retraso = [], []
-    for fondo, donde in ((5, con_retraso), (0, sin_retraso)):
+    for pendientes, donde in ((5, con_retraso), (0, sin_retraso)):
         linea, reloj = _linea(target_fps=5.0)
         tomados = 0
         for _ in range(4):
-            linea.realimentar(tomados=tomados, fondo=fondo)
+            linea.realimentar(tomados=tomados, pendientes=pendientes)
             tomados += 15
             _seleccionados(linea, 120)
             reloj.avanzar(4)
-        linea.realimentar(tomados=tomados, fondo=fondo)
+        linea.realimentar(tomados=tomados, pendientes=pendientes)
         donde.append(linea.tasa_efectiva)
 
     assert con_retraso[0] < sin_retraso[0]
@@ -289,17 +290,17 @@ def test_el_retraso_que_no_se_va_solo_se_descuenta_del_muestreo() -> None:
 
 def test_el_muestreo_vuelve_a_subir_cuando_el_consumidor_da_abasto() -> None:
     linea, reloj = _linea(target_fps=5.0)
-    linea.realimentar(tomados=0, fondo=0)
+    linea.realimentar(tomados=0, pendientes=0)
     _seleccionados(linea, 120)
     reloj.avanzar(4)
-    linea.realimentar(tomados=15, fondo=0)
+    linea.realimentar(tomados=15, pendientes=0)
     tasa_baja = linea.tasa_efectiva
     assert tasa_baja < 5.0
 
     # Ahora se lleva todo lo que se le ofrece y el buffer se queda vacio.
     _seleccionados(linea, 120)
     reloj.avanzar(4)
-    linea.realimentar(tomados=99, fondo=0)
+    linea.realimentar(tomados=99, pendientes=0)
     assert linea.tasa_efectiva == pytest.approx(min(tasa_baja * 1.25, 5.0))
     assert linea.tasa_efectiva > tasa_baja
 
@@ -308,10 +309,10 @@ def test_el_muestreo_no_pasa_del_target_por_mucho_margen_que_haya() -> None:
     linea, reloj = _linea(target_fps=5.0)
     tomados = 0
     for _ in range(6):
-        linea.realimentar(tomados=tomados, fondo=0)
+        linea.realimentar(tomados=tomados, pendientes=0)
         tomados += len(_seleccionados(linea, 120))
         reloj.avanzar(4)
-    linea.realimentar(tomados=tomados, fondo=0)
+    linea.realimentar(tomados=tomados, pendientes=0)
     assert linea.tasa_efectiva == 5.0
 
 
@@ -319,10 +320,10 @@ def test_una_ventana_sin_consumo_no_cuenta() -> None:
     # Es la del arranque, mientras el detector carga los pesos y calienta. Ajustar ahi
     # dejaria el muestreo en el suelo y tardaria un minuto en recuperarse.
     linea, reloj = _linea(target_fps=5.0)
-    linea.realimentar(tomados=0, fondo=0)
+    linea.realimentar(tomados=0, pendientes=0)
     _seleccionados(linea, 300)
     reloj.avanzar(10)
-    linea.realimentar(tomados=0, fondo=0)
+    linea.realimentar(tomados=0, pendientes=0)
     assert linea.tasa_efectiva == 5.0
 
 
@@ -330,11 +331,11 @@ def test_el_muestreo_no_baja_del_suelo_aunque_el_consumidor_se_atasque() -> None
     linea, reloj = _linea(target_fps=5.0)
     tomados = 0
     for _ in range(30):
-        linea.realimentar(tomados=tomados, fondo=20)
+        linea.realimentar(tomados=tomados, pendientes=20)
         _seleccionados(linea, 120)
         reloj.avanzar(4)
         tomados += 1  # un fotograma cada cuatro segundos: la maquina esta atascada
-    linea.realimentar(tomados=tomados, fondo=20)
+    linea.realimentar(tomados=tomados, pendientes=20)
     # Por mucho que se baje ventana tras ventana, no se deja de muestrear del todo: sin
     # suelo, un consumidor atascado dejaria la fuente muda y no habria con que volver.
     assert linea.tasa_efectiva >= 0.5
@@ -343,10 +344,117 @@ def test_el_muestreo_no_baja_del_suelo_aunque_el_consumidor_se_atasque() -> None
 
 def test_antes_de_que_pase_la_ventana_no_se_ajusta_nada() -> None:
     linea, reloj = _linea(target_fps=5.0)
-    linea.realimentar(tomados=0, fondo=0)
+    linea.realimentar(tomados=0, pendientes=0)
     _seleccionados(linea, 60)
     reloj.avanzar(2)
-    assert linea.realimentar(tomados=1, fondo=9) is False
+    linea.realimentar(tomados=1, pendientes=9)
+    assert linea.tasa_efectiva == 5.0
+
+
+def _ventana(
+    linea: VideoTimeline,
+    reloj: RelojFalso,
+    *,
+    tomados: int,
+    pendientes: int,
+    decodificados: int = 120,
+) -> None:
+    """Pasa una ventana entera: se decodifica, pasa el tiempo y se realimenta."""
+    _seleccionados(linea, decodificados)
+    reloj.avanzar(4)
+    linea.realimentar(tomados=tomados, pendientes=pendientes)
+
+
+def test_el_valle_se_vuelve_a_medir_en_cada_ventana() -> None:
+    """El valle es de la ventana, no de toda la ejecucion.
+
+    Si solo pudiera decrecer, en cuanto el buffer se vaciara una vez el drenaje quedaria
+    muerto para el resto de la ejecucion y nada lo diria. Es un fallo de larga duracion:
+    ningun test corto lo ve por casualidad, porque hace falta que el buffer se vacie
+    **antes** de que aparezca el retraso.
+
+    Por eso se comparan tres ejecuciones y no dos: que las dos con retraso coincidan no
+    demuestra nada si en ninguna se drena, asi que la tercera -sin retraso- es la que
+    obliga a que el drenaje exista de verdad.
+    """
+    tasas = {}
+    for nombre, se_vacia_primero, pendientes in (
+        ("tras vaciarse", True, 5),
+        ("sin vaciarse", False, 5),
+        ("sin retraso", True, 0),
+    ):
+        linea, reloj = _linea(target_fps=10.0)
+        linea.realimentar(tomados=0, pendientes=0)
+        tomados = 0
+        if se_vacia_primero:
+            # Una ventana en la que el consumidor va al dia y el buffer llega a vaciarse.
+            tomados += 40
+            _ventana(linea, reloj, tomados=tomados, pendientes=0)
+        # Y ahora dos en las que se queda corto y deja siempre cinco esperando.
+        for _ in range(2):
+            tomados += 15
+            _ventana(linea, reloj, tomados=tomados, pendientes=pendientes)
+        tomados += 500
+        _ventana(linea, reloj, tomados=tomados, pendientes=pendientes)
+        tasas[nombre] = linea.tasa_efectiva
+
+    assert tasas["tras vaciarse"] == pytest.approx(tasas["sin vaciarse"]), (
+        "haberse vaciado antes ha dejado el drenaje muerto para el resto de la ejecucion"
+    )
+    assert tasas["tras vaciarse"] < tasas["sin retraso"], "no se esta drenando nada"
+
+
+def test_el_valle_se_descuenta_repartido_en_varias_ventanas() -> None:
+    # No basta con que se descuente: **cuanto** se descuenta es la diferencia entre ajustar
+    # y hundir. Drenarlo de una vez mandaba el muestreo al suelo en el arranque y costaba
+    # un tercio de los fps contra el directo (2,47 en vez de 3,7).
+    #
+    # Las dos ejecuciones son identicas salvo por los cinco fotogramas que se quedan
+    # esperando, asi que la diferencia entre sus tasas es exactamente el drenaje.
+    tasas = {}
+    for pendientes in (0, 5):
+        linea, reloj = _linea(target_fps=10.0)
+        linea.realimentar(tomados=0, pendientes=0)
+        tomados = 0
+        for _ in range(3):
+            tomados += 15
+            _ventana(linea, reloj, tomados=tomados, pendientes=0)
+        # La penultima deja el valle puesto para la siguiente, sin drenar todavia.
+        tomados += 15
+        _ventana(linea, reloj, tomados=tomados, pendientes=pendientes)
+        # Y en la ultima el consumidor se lleva todo lo que se le ofrece, asi que lo unico
+        # que puede separar a las dos es el drenaje.
+        tomados += 500
+        _ventana(linea, reloj, tomados=tomados, pendientes=pendientes)
+        tasas[pendientes] = linea.tasa_efectiva
+
+    assert tasas[0] - tasas[5] == pytest.approx(5 / (4 * DRENAJE_EN_VENTANAS))
+
+
+def test_un_consumidor_parado_del_todo_baja_el_muestreo_hasta_el_suelo() -> None:
+    # Antes no bajaba: una ventana sin consumo se saltaba entera, asi que un analisis
+    # atascado se quedaba muestreando a tope y el suelo era inalcanzable por ese camino.
+    # El buffer seguia acotando el retraso, pero se gastaba CPU en fotogramas que se iban
+    # a tirar y el comentario del suelo era mentira.
+    linea, reloj = _linea(target_fps=5.0)
+    linea.realimentar(tomados=0, pendientes=0)
+    # Arranca consumiendo, para distinguir "todavia no ha empezado" de "se ha parado".
+    _ventana(linea, reloj, tomados=20, pendientes=0)
+    assert linea.tasa_efectiva == 5.0
+
+    for _ in range(40):
+        _ventana(linea, reloj, tomados=20, pendientes=20)
+    # Hasta el suelo, salvo la banda muerta con la que se evita reajustar por nada.
+    assert linea.tasa_efectiva == pytest.approx(0.5, abs=0.05)
+
+
+def test_una_ventana_sin_consumo_antes_de_arrancar_no_cuenta() -> None:
+    # La del arranque, mientras el detector carga los pesos: ahi nadie ha consumido nada
+    # todavia y bajar el muestreo seria castigar a la maquina por estar encendiendose.
+    linea, reloj = _linea(target_fps=5.0)
+    linea.realimentar(tomados=0, pendientes=0)
+    for _ in range(3):
+        _ventana(linea, reloj, tomados=0, pendientes=20)
     assert linea.tasa_efectiva == 5.0
 
 
@@ -451,18 +559,15 @@ def test_el_buffer_cuenta_lo_que_se_lleva_el_analisis() -> None:
     assert buffer.tomados == 2
 
 
-def test_el_fondo_del_buffer_es_el_retraso_que_no_se_va_solo() -> None:
-    # Con un transporte a rafagas, mirar cuanto ocupa el buffer no dice nada: cada segmento
-    # lo llena por definicion. Lo que importa es el valle entre rafaga y rafaga.
+def test_el_buffer_dice_cuantos_quedan_esperando() -> None:
+    # Es lo que se le pasa a la linea de tiempo para que descuente el retraso que no se va
+    # solo. El valle lo mide ella, que es quien sabe donde empieza y acaba una ventana.
     buffer = RecentFrameBuffer(4.0)
     for numero in range(10):
         buffer.publicar(_imagen(numero), INICIO + timedelta(seconds=0.2 * numero))
     for _ in range(8):
         buffer.tomar(timeout=0)
     assert len(buffer) == 2
-    assert buffer.fondo == 0, "el buffer llego a estar vacio antes de la rafaga"
-    buffer.reiniciar_fondo()
-    assert buffer.fondo == 2
 
 
 def test_el_buffer_vacio_con_timeout_devuelve_none() -> None:
