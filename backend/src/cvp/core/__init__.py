@@ -23,6 +23,12 @@ from cvp.core.registry import (
     register_source,
     register_tracker,
 )
+from cvp.core.serialization import (
+    event_from_dict,
+    event_to_dict,
+    metric_from_dict,
+    metric_to_dict,
+)
 from cvp.core.types import (
     AnalyzerOutput,
     BBox,
@@ -55,6 +61,10 @@ __all__ = [
     "Tracker",
     "UnknownTypeError",
     "VideoSource",
+    "event_from_dict",
+    "event_to_dict",
+    "metric_from_dict",
+    "metric_to_dict",
     "register_analyzer",
     "register_detector",
     "register_sink",

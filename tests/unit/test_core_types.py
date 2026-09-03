@@ -40,6 +40,13 @@ except Exception:  # pragma: no cover - depende de la maquina, no del codigo
 AHORA = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
 
 NOMBRES_PUBLICOS = {
+    # La forma canonica en JSON (#19). Vive en el core porque el core ya validaba
+    # contra un contrato JSON -Event rechaza lo no serializable en su constructor-
+    # que hasta #19 no estaba escrito en ningun sitio.
+    "event_to_dict",
+    "event_from_dict",
+    "metric_to_dict",
+    "metric_from_dict",
     # Los ocho tipos
     "BBox",
     "SourceInfo",
