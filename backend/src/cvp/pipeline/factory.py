@@ -15,10 +15,11 @@ Dos reglas que explican la forma del modulo:
   el directo; si no, el error tarda medio minuto en aparecer y llega detras de mil lineas
   de log de ultralytics.
 - **No hay ni un `if tipo == ...`.** El nombre lo resuelve el registro y el objeto lo
-  construye su propio `from_config`. Lo unico que sabe este modulo es que **el tracker
-  necesita un `frame_rate` que no esta en el YAML**, porque es el `target_fps` de la
-  fuente; eso es una regla del bloque `tracker`, no de una implementacion concreta, y por
-  eso vive en una tabla y no en un condicional.
+  construye su propio `from_config`. Lo unico que sabe este modulo son dos reglas de
+  bloque, no de implementacion, y por eso se aplican a todo el bloque y no a un nombre:
+  **el tracker necesita un `frame_rate` que no esta en el YAML** (es el `target_fps` de la
+  fuente) y **un sink necesita saber de que proyecto es lo que escribe** (#9). Ninguna de
+  las dos mira el `type:`.
 """
 
 from __future__ import annotations
@@ -131,9 +132,9 @@ def build_pipeline(
 
     source = _construir(clase_fuente, config.source, "source")
     detector = _construir(clase_detector, config.detector, "detector")
-    # El unico argumento que no sale del YAML. `frame_rate` es la tasa a la que el tracker
-    # ve fotogramas, o sea `source.target_fps`: escribirlo tambien en el bloque `tracker`
-    # seria una forma segura de que los dos acabaran discrepando (decision de #3 y #7).
+    # `frame_rate` es la tasa a la que el tracker ve fotogramas, o sea `source.target_fps`:
+    # escribirlo tambien en el bloque `tracker` seria una forma segura de que los dos
+    # acabaran discrepando (decision de #3 y #7).
     tracker = _construir(
         clase_tracker, config.tracker, "tracker", frame_rate=config.source.target_fps
     )
@@ -141,8 +142,14 @@ def build_pipeline(
         _construir(clase, cfg, f"analyzers[{i}]")
         for i, (clase, cfg) in enumerate(zip(clases_analizadores, config.analyzers, strict=True))
     )
+    # El otro argumento que no sale del bloque: **un sink tiene que saber a que proyecto
+    # pertenece lo que escribe**. La tabla `project` cuelga de ahi y el `preview` deriva de
+    # ahi su ruta en disco (#9), y repetir el `id:` debajo de `sinks` seria la misma
+    # discrepancia garantizada que con el `frame_rate`. Los sinks a los que no les sirve
+    # —`jsonl`— lo aceptan y lo descartan: un parametro que alguna implementacion ignora
+    # cuesta mucho menos que un caso especial aqui dentro.
     sinks = tuple(
-        _construir(clase, cfg, f"sinks[{i}]")
+        _construir(clase, cfg, f"sinks[{i}]", project_id=config.id, project_name=config.name)
         for i, (clase, cfg) in enumerate(zip(clases_sinks, config.sinks, strict=True))
     )
 

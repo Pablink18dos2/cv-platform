@@ -612,14 +612,33 @@ class ParkingOccupancyAnalyzer(_AnalyzerBase):
 
 
 class SqliteSink(_ModeloBase):
-    """Persistencia. `url` es una URL de SQLAlchemy, no una ruta: no se resuelve."""
+    """Persistencia. `url` es una URL de SQLAlchemy, no una ruta: no se resuelve.
+
+    `batch_size` y `max_interval_s` son la ventana de escritura: el sink agrupa y escribe
+    cuando junta `batch_size` registros o cuando pasan `max_interval_s` segundos desde el
+    ultimo volcado, lo que ocurra antes. Son configurables porque son un intercambio que
+    decide quien opera el sistema: **lo que se agrupa es lo que se pierde si el proceso
+    muere de golpe** (`cvp.sinks.sqlite` lo detalla en su docstring).
+    """
 
     type: Literal["sqlite"]
     url: str = "sqlite:///data/cvp.sqlite3"
+    batch_size: Annotated[int, Field(ge=1)] = 200
+    max_interval_s: Annotated[float, Field(gt=0)] = 5.0
 
 
 class PreviewSink(_ModeloBase):
-    """Ring buffer en memoria con el ultimo fotograma anotado; es lo que sirve el MJPEG."""
+    """El ultimo fotograma en disco como JPEG; es lo que servira el MJPEG de #12.
+
+    **No es un ring buffer en memoria**, aunque lo fuera en el diseno original: worker y API
+    son procesos distintos y la memoria de uno no la lee el otro (decision 2 de #9). El
+    fichero va en `data/preview/<id del proyecto>.jpg`, al lado de la base de datos y por el
+    mismo motivo que ella: es una ruta conocida que los dos procesos derivan del proyecto
+    sin ponerse de acuerdo.
+
+    `max_frames` es lo que queda de aquel ring buffer y el sink en disco no lo usa: solo
+    existe el ultimo fotograma. Se conserva para no romper los `project.yaml` ya escritos.
+    """
 
     type: Literal["preview"]
     max_frames: Annotated[int, Field(ge=1)] = 2
