@@ -16,17 +16,22 @@ flowchart LR
     T --> A[Analyzers]
     A --> K[Sinks]
     K --> DB[(SQLite / Postgres)]
-    K --> RB[Ring buffer<br/>en memoria]
+    K --> JPG[último fotograma<br/>JPEG en disco]
     DB --> API[FastAPI]
-    RB --> API
+    JPG --> API
     API --> UI[React dashboard]
 ```
 
 Dos procesos distintos, y esto es deliberado:
 
 - **Worker** — `Source → Detector → Tracker → Analyzers → Sinks`. Consume CPU, uno por proyecto.
-- **API** — solo lectura sobre la base de datos y el ring buffer. No carga modelos, arranca en
-  milisegundos, y se podría desplegar en un plan gratuito de cloud dejando el worker en casa.
+- **API** — solo lectura sobre la base de datos y sobre el fichero del último fotograma. No carga
+  modelos, arranca en milisegundos, y se podría desplegar en un plan gratuito de cloud dejando el
+  worker en casa.
+
+Que sean dos procesos tiene una consecuencia que este documento se saltaba: **lo que uno tenga en
+memoria, el otro no lo ve**. Por eso el preview no es un buffer en memoria, sino un fichero
+(decisión 2 de #9, abajo).
 
 ## Los bloques
 
@@ -121,12 +126,39 @@ sin vídeo, sin modelo y sin red.
 
 ```python
 class Sink(Protocol):
-    def write(self, run_id: str, output: AnalyzerOutput) -> None: ...
+    def write(self, run_id: str, frame: Frame, output: AnalyzerOutput) -> None: ...
     def flush(self) -> None: ...
 ```
 
-Implementaciones: `sqlite` (agregación por minuto incluida), `jsonl` (depuración), `preview`
-(ring buffer en memoria con el último fotograma anotado, es lo que sirve el MJPEG).
+Implementaciones: `sqlite` (persistencia por lotes, con la agregación por minuto incluida),
+`jsonl` (una línea por evento y métrica, para depurar), `preview` (el último fotograma en disco
+como JPEG, que es lo que sirve el MJPEG).
+
+**`write` recibe el fotograma, y dos de los tres sinks lo ignoran.** Es una decisión de #9, no un
+descuido: el `preview` tiene que guardar un fotograma y en `AnalyzerOutput` no hay ninguno, así
+que o lo recibían todos los sinks o el `preview` dejaba de ser un `Sink` y lo cableaba el runner
+con un `if tipo == "preview"`. Un parámetro que algunas implementaciones ignoran cuesta mucho
+menos que un caso especial en el orquestador, y el caso especial se pagaría cada vez que alguien
+añadiera un bloque.
+
+**El `preview` escribe un fichero, no un buffer en memoria.** Worker y API son procesos distintos
+—y eso no se toca—, así que un ring buffer en la memoria del worker es sencillamente invisible
+para la API. El sink guarda el último fotograma en `data/preview/<id del proyecto>.jpg`, una ruta
+que los dos procesos derivan del proyecto sin ponerse de acuerdo, y la API sirve ese fichero.
+Cruza procesos, sobrevive a un reinicio de la API y no necesita memoria compartida.
+
+La escritura es **atómica**: fichero temporal en el mismo directorio y `os.replace`. Sin eso la
+API acaba sirviendo un JPEG a medio escribir una vez de cada cien, y ese fallo se diagnostica
+fatal porque cuando uno va a mirar el fichero ya está entero.
+
+**El `run_id` tiene formato canónico** (`20260824T142018Z-2808cc47`): ordenable
+lexicográficamente por tiempo, único aunque dos arranques caigan en el mismo segundo, y legible.
+Lo genera el runner y lo fija `cvp.storage.run_id`.
+
+**Los agregados por minuto normalizan por timestamps, nunca por número de fotogramas.** Desde #23
+la tasa efectiva se adapta a lo que el análisis sostiene, así que el número de fotogramas de un
+minuto no es constante. El minuto de una muestra sale de su propio timestamp truncado en UTC, y
+un lote que cruza una frontera de minuto se reparte solo entre los dos.
 
 Aquí es donde se cambiaría a una cola de mensajes el día que haga falta, sin que se entere
 ningún otro bloque.
@@ -232,7 +264,7 @@ backend/src/cvp/
   analyzers/    traffic.py, parking.py, registry.py
   sinks/        sqlite.py, jsonl.py, preview.py, registry.py
   pipeline/     config.py (Pydantic), runner.py, cli.py
-  storage/      models.py (SQLModel), queries.py, migrations
+  storage/      models.py (SQLModel), engine.py (WAL), aggregation.py, queries.py, run_id.py
   api/          app.py, routers/{projects,metrics,stream}.py
 projects/       un directorio por proyecto: project.yaml + zones.json
 frontend/       React + Vite, compartido por todos los proyectos

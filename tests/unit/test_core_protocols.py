@@ -109,17 +109,17 @@ class AnalizadorFalso:
 
 class SinkFalso:
     def __init__(self) -> None:
-        self.escrito: list[AnalyzerOutput] = []
+        self.escrito: list[tuple[Frame, AnalyzerOutput]] = []
 
-    def write(self, run_id: str, output: AnalyzerOutput) -> None:
-        self.escrito.append(output)
+    def write(self, run_id: str, frame: Frame, output: AnalyzerOutput) -> None:
+        self.escrito.append((frame, output))
 
     def flush(self) -> None:
         pass
 
 
 class SinkSinFlush:
-    def write(self, run_id: str, output: AnalyzerOutput) -> None:
+    def write(self, run_id: str, frame: Frame, output: AnalyzerOutput) -> None:
         pass
 
 

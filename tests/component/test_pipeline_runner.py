@@ -278,20 +278,24 @@ class FakeSink:
     def __init__(self, *, name: str = "fake", falla: bool = False) -> None:
         self.name = name
         self.falla = falla
-        self.escrituras: list[tuple[str, AnalyzerOutput]] = []
+        self.escrituras: list[tuple[str, Frame, AnalyzerOutput]] = []
         self.flushes = 0
         self.creada_desde: Any = None
+        self.proyecto: tuple[str, str] | None = None
 
     @classmethod
-    def from_config(cls, cfg: Any) -> FakeSink:
+    def from_config(cls, cfg: Any, *, project_id: str, project_name: str, **_: Any) -> FakeSink:
+        # `project_id` y `project_name` no salen del bloque `sinks`: los pasa la fabrica
+        # porque un sink tiene que saber de que proyecto es lo que escribe (#9).
         sink = cls(name=cfg.type)
         sink.creada_desde = cfg
+        sink.proyecto = (project_id, project_name)
         return sink
 
-    def write(self, run_id: str, output: AnalyzerOutput) -> None:
+    def write(self, run_id: str, frame: Frame, output: AnalyzerOutput) -> None:
         if self.falla:
             raise RuntimeError(f"el sink {self.name} no puede escribir")
-        self.escrituras.append((run_id, output))
+        self.escrituras.append((run_id, frame, output))
 
     def flush(self) -> None:
         self.flushes += 1
@@ -582,7 +586,7 @@ def test_el_run_id_es_el_mismo_en_toda_la_ejecucion_y_distinto_en_la_siguiente()
     corredor = runner(source=FakeSource(frames=4), analyzers=(FakeAnalyzer(),), sinks=(sink,))
     stats = corredor.run()
 
-    escritos = {run_id for run_id, _ in sink.escrituras}
+    escritos = {run_id for run_id, _, _ in sink.escrituras}
     assert escritos == {stats.run_id}
 
     otro = runner(source=FakeSource(frames=1), analyzers=(FakeAnalyzer(),), sinks=(FakeSink(),))
@@ -851,10 +855,10 @@ class SinkQueSenala(FakeSink):
         super().__init__(**kwargs)
         self.veces = veces
 
-    def write(self, run_id: str, output: AnalyzerOutput) -> None:
+    def write(self, run_id: str, frame: Frame, output: AnalyzerOutput) -> None:
         for _ in range(self.veces):
             signal.raise_signal(signal.SIGINT)
-        super().write(run_id, output)
+        super().write(run_id, frame, output)
 
 
 def test_el_aborto_tampoco_se_lo_traga_el_except_que_protege_a_los_sinks() -> None:

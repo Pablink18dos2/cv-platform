@@ -29,7 +29,6 @@ from __future__ import annotations
 import logging
 import signal
 import statistics
-import uuid
 from collections import deque
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
@@ -44,6 +43,7 @@ from cvp.core import BBox
 from cvp.pipeline.config import ProjectConfig, Reconnect, Region
 from cvp.pipeline.errors import AbortRequested, PipelineError
 from cvp.pipeline.factory import build_pipeline
+from cvp.storage.run_id import nuevo_run_id
 
 __all__ = [
     "AbortRequested",
@@ -454,17 +454,21 @@ class PipelineRunner:
             self.stats.analyzer_calls[analizador.name] = (
                 self.stats.analyzer_calls.get(analizador.name, 0) + 1
             )
-            self._escribir(salida)
+            self._escribir(frame, salida)
 
-    def _escribir(self, salida: Any) -> None:
+    def _escribir(self, frame: Any, salida: Any) -> None:
         """La salida de un analizador va a **todos** los sinks, y uno roto no tumba nada.
 
         Perder una escritura es mucho menos malo que perder el worker: si el disco se llena
         o SQLite se bloquea, lo que hay que conservar es el proceso que sigue midiendo.
+
+        El fotograma viaja junto a la salida desde #9: el sink `preview` tiene que guardarlo
+        y en `AnalyzerOutput` no hay ninguno. La alternativa era un `if tipo == "preview"`
+        aqui dentro, que es justo lo que el registro por nombre existe para evitar.
         """
         for sink in self._sinks:
             try:
-                sink.write(self.stats.run_id, salida)
+                sink.write(self.stats.run_id, frame, salida)
             except Exception:
                 self.stats.sink_errors += 1
                 _log.exception(
@@ -554,11 +558,11 @@ class PipelineRunner:
     def _nuevo_run_id(self) -> str:
         """Identificador de esta ejecucion: legible por delante y unico por detras.
 
-        Su formato canonico y su persistencia son de #9; aqui basta con que sea estable
-        durante toda la ejecucion y distinto en dos arranques del mismo proyecto, incluso
-        si caen en el mismo segundo.
+        El formato lo fija `cvp.storage.run_id` desde #9, que es cuando dejo de ser una
+        cadena opaca del runner para ser la clave primaria de la tabla `run` y el orden de
+        las ejecuciones en la API. Aqui solo se le pasa el reloj inyectado.
         """
-        return f"{self._clock().strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}"
+        return nuevo_run_id(self._clock())
 
 
 def _espera_de_backoff(backoff_s: Sequence[float], intento: int) -> float:

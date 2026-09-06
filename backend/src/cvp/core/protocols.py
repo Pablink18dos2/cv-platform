@@ -105,12 +105,24 @@ class Analyzer(Protocol):
 
 @runtime_checkable
 class Sink(Protocol):
-    """Donde acaba el resultado: SQLite, JSONL, el ring buffer del preview.
+    """Donde acaba el resultado: la base de datos, un JSONL de depuracion, el preview.
 
     `run_id` identifica la ejecucion concreta del worker, para poder distinguir dos
-    arranques del mismo proyecto.
+    arranques del mismo proyecto. Su formato canonico lo fija `cvp.storage.run_id` (#9).
+
+    **`write` recibe tambien el fotograma, y esa firma es una decision de #9.** El sink
+    `preview` tiene que guardar el ultimo fotograma y en `AnalyzerOutput` no hay ninguno,
+    asi que habia dos salidas: pasar el fotograma a todos los sinks —y que `sqlite` reciba
+    uno que ignora— o sacar el `preview` del registro y cablearlo aparte en el runner. Se
+    eligio lo primero: un parametro que algunas implementaciones ignoran cuesta mucho menos
+    que un `if tipo == "preview"` en el orquestador, que es exactamente lo que el registro
+    por nombre existe para evitar y lo que `_docs/architecture.md` prohibe. El caso especial
+    se pagaria ademas cada vez que alguien anadiera un bloque, y el parametro de mas no.
+
+    `frame` es el fotograma que produjo esta salida, **sin anotar**: quien dibuja son los
+    analizadores (`Analyzer.annotate`, #10 y #11).
     """
 
-    def write(self, run_id: str, output: AnalyzerOutput) -> None: ...
+    def write(self, run_id: str, frame: Frame, output: AnalyzerOutput) -> None: ...
 
     def flush(self) -> None: ...
