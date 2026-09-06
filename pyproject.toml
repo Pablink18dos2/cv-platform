@@ -19,6 +19,11 @@ dependencies = [
     # dia que ultralytics deje de traerlo la configuracion tiene que seguir cargando.
     "pydantic>=2.9",
     "pyyaml>=6.0",
+    # `cvp.storage` define el esquema con SQLModel, que es la decision de stack de
+    # `_docs/plan.md`: una sola capa de modelos para SQLite en local y Postgres en Docker.
+    # Arrastra SQLAlchemy, que es quien habla con las dos bases. Ni `cvp.core` ni
+    # `cvp.pipeline.config` lo importan, y los dos tests de aislamiento lo comprueban.
+    "sqlmodel>=0.0.22",
     "supervision>=0.25",
     "trackers>=0.1",
     "ultralytics>=8.3",
