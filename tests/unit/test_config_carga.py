@@ -303,7 +303,7 @@ def test_una_fase_que_falla_no_deja_correr_a_la_siguiente(tmp_path: Path) -> Non
 def test_las_lineas_van_ordenadas_por_ruta_de_campo(tmp_path: Path) -> None:
     fichero = escribir(
         tmp_path / "mi-proyecto" / "project.yaml",
-        sinks=[{"type": "preview", "max_frames": 0}, {"type": "jsonl"}],
+        sinks=[{"type": "sqlite", "batch_size": 0}, {"type": "jsonl"}],
         detector={"type": "yolo", "classes": ["car"], "imgsz": 700},
     )
     with pytest.raises(ConfigError) as error:
@@ -311,7 +311,7 @@ def test_las_lineas_van_ordenadas_por_ruta_de_campo(tmp_path: Path) -> None:
     assert error.value.problems == (
         "detector.imgsz: debe ser múltiplo de 32 porque ultralytics lo redondea por su "
         "cuenta y el YAML dejaría de decir la verdad, y vale 700",
-        "sinks[0].max_frames: debe ser >= 1, y vale 0",
+        "sinks[0].batch_size: debe ser >= 1, y vale 0",
         "sinks[1].path: campo obligatorio que falta",
     )
 

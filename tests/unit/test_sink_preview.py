@@ -182,7 +182,6 @@ def test_from_config_escribe_donde_dice_la_convencion(
 ) -> None:
     class Cfg:
         type = "preview"
-        max_frames = 2
 
     monkeypatch.chdir(tmp_path)
     sink = PreviewSink.from_config(Cfg(), project_id="01-parking-trafico", project_name="P")

@@ -94,9 +94,9 @@ class PreviewSink:
     def from_config(cls, cfg: Any, *, project_id: str, **_: Any) -> PreviewSink:
         """Construye desde el bloque `sinks` del `project.yaml`.
 
-        La ruta sale del `id` del proyecto, que pasa la fabrica. `cfg.max_frames` describia
-        el ring buffer en memoria que la decision 2 de #9 sustituye y aqui no se usa: en
-        disco solo existe el ultimo fotograma.
+        La ruta sale del `id` del proyecto, que pasa la fabrica; del bloque `sinks` solo
+        hace falta el `type`, porque en disco solo existe el ultimo fotograma y no hay
+        nada que ajustar.
         """
         return cls(ruta_de_preview(project_id))
 

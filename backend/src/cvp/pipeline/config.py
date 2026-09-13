@@ -636,12 +636,13 @@ class PreviewSink(_ModeloBase):
     mismo motivo que ella: es una ruta conocida que los dos procesos derivan del proyecto
     sin ponerse de acuerdo.
 
-    `max_frames` es lo que queda de aquel ring buffer y el sink en disco no lo usa: solo
-    existe el ultimo fotograma. Se conserva para no romper los `project.yaml` ya escritos.
+    No tiene campos: en disco solo existe el ultimo fotograma y no hay nada que ajustar. El
+    `max_frames` del ring buffer original se retiro en #9 en vez de dejarlo inerte, porque
+    un campo que `cvp validate` bendice y que no hace nada es una trampa para quien lo
+    escriba creyendo que configura algo.
     """
 
     type: Literal["preview"]
-    max_frames: Annotated[int, Field(ge=1)] = 2
 
 
 class JsonlSink(_ModeloBase):

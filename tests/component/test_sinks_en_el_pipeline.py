@@ -61,7 +61,7 @@ PROJECT_YAML: dict[str, Any] = {
     ],
     "sinks": [
         {"type": "sqlite"},
-        {"type": "preview", "max_frames": 2},
+        {"type": "preview"},
         {"type": "jsonl", "path": "eventos.jsonl"},
     ],
 }

@@ -156,9 +156,24 @@ lexicográficamente por tiempo, único aunque dos arranques caigan en el mismo s
 Lo genera el runner y lo fija `cvp.storage.run_id`.
 
 **Los agregados por minuto normalizan por timestamps, nunca por número de fotogramas.** Desde #23
-la tasa efectiva se adapta a lo que el análisis sostiene, así que el número de fotogramas de un
-minuto no es constante. El minuto de una muestra sale de su propio timestamp truncado en UTC, y
-un lote que cruza una frontera de minuto se reparte solo entre los dos.
+la tasa efectiva se adapta a lo que el análisis sostiene —dentro del minuto, y con sesgo: el
+análisis va más lento cuando hay más objetos en escena—, así que el número de fotogramas de un
+minuto no es constante y una media por muestra aplana justo los minutos con más tráfico. La
+media de un minuto es una **media en el tiempo**: cada muestra pesa el tramo que representa
+(hasta el punto medio con sus vecinas, con un tope de 15 s por lado y sin salir de su minuto), y
+la tabla guarda la integral valor·segundo y los segundos cubiertos, que se acumulan entre lotes.
+El minuto de una muestra sale de su propio timestamp truncado en UTC, y un lote que cruza una
+frontera de minuto se reparte solo entre los dos. `cvp.storage.aggregation` tiene el detalle,
+incluido qué pasa con la última muestra de cada lote.
+
+**El `from_config` de un sink recibe el proyecto.** La fábrica llama a
+`Sink.from_config(cfg, *, project_id, project_name)`, con el `id:` y el `name:` del
+`project.yaml`, porque un sink tiene que saber de qué proyecto es lo que escribe —la tabla
+`project` cuelga de ahí y el `preview` deriva de ahí su ruta— y repetirlos debajo de `sinks`
+sería la misma discrepancia garantizada que el `frame_rate` del tracker. Es la misma regla que
+la del tracker, y como ella no está en el `Protocol`: los protocolos describen cómo se **usa**
+un bloque, no cómo se fabrica. Un sink nuevo que no los necesite los acepta y los descarta
+(`**_`), como hace `jsonl`; uno escrito con `from_config(cls, cfg)` a secas no arranca.
 
 Aquí es donde se cambiaría a una cola de mensajes el día que haga falta, sin que se entere
 ningún otro bloque.
@@ -223,7 +238,7 @@ analyzers:
 
 sinks:
   - { type: sqlite }
-  - { type: preview, max_frames: 2 }
+  - { type: preview }
 ```
 
 La configuración se valida con Pydantic **al arrancar**. Un YAML mal escrito falla en el

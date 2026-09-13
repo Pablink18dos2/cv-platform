@@ -401,7 +401,17 @@ def test_el_zones_file_del_aparcamiento_tiene_que_existir(tmp_path: Path) -> Non
 def test_los_valores_por_defecto_de_los_sinks(tmp_path: Path) -> None:
     config = carga(tmp_path, sinks=[{"type": "sqlite"}, {"type": "preview"}])
     assert config.sinks[0].url == "sqlite:///data/cvp.sqlite3"
-    assert config.sinks[1].max_frames == 2
+    assert (config.sinks[0].batch_size, config.sinks[0].max_interval_s) == (200, 5.0)
+    # El preview no tiene nada que ajustar: en disco solo existe el ultimo fotograma.
+    assert set(type(config.sinks[1]).model_fields) == {"type"}
+
+
+def test_el_preview_ya_no_acepta_max_frames(tmp_path: Path) -> None:
+    """Era el tamano del ring buffer en memoria que #9 sustituyo por un fichero. Se retiro
+    en vez de dejarlo inerte: un campo que `cvp validate` bendice y que no hace nada es una
+    trampa para quien lo escriba creyendo que configura algo."""
+    (problema,) = problemas(tmp_path, sinks=[{"type": "preview", "max_frames": 2}])
+    assert problema.startswith("sinks[0].max_frames: campo desconocido")
 
 
 def test_el_jsonl_necesita_una_ruta(tmp_path: Path) -> None:
