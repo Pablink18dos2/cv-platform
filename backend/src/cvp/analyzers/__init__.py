@@ -9,8 +9,14 @@ Lo que comparten todos, y que un analizador nuevo debe reutilizar en vez de copi
   de un punto respecto a una linea.
 - `cvp.analyzers.drawing` — las primitivas de `annotate`, que nunca pintan sobre el array
   que reciben.
+
+Y el molde: `cvp.analyzers.traffic` (#10). Argumentos planos en el constructor,
+`from_config` como unico puente con el YAML, estado por track que se olvida, timestamps de
+`frame.timestamp`, y tests con trayectorias sinteticas antes que con video.
 """
 
 from __future__ import annotations
 
-__all__: list[str] = []
+from cvp.analyzers.traffic import TrafficFlowAnalyzer
+
+__all__ = ["TrafficFlowAnalyzer"]

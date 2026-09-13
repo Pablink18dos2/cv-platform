@@ -205,12 +205,19 @@ def test_run_acepta_el_directorio_y_rechaza_un_type_sin_implementacion(
     """Importa los paquetes de implementacion de verdad, y por eso va marcado `slow`.
 
     No carga ningun modelo ni abre ninguna fuente: el runner resuelve **los cinco nombres
-    antes de construir nada**, y `traffic_flow` todavia no tiene implementacion (#10). Es
-    el hueco entre `CONFIG_SCHEMAS` y los registros, visto desde el CLI.
+    antes de construir nada**, y `parking_occupancy` todavia no tiene implementacion (#11;
+    hasta #10 el ejemplo era `traffic_flow`). Es el hueco entre `CONFIG_SCHEMAS` y los
+    registros, visto desde el CLI.
     """
-    directorio = proyecto(tmp_path, source={"type": "file", "path": str(VIDEO), "target_fps": 5})
+    directorio = proyecto(
+        tmp_path,
+        source={"type": "file", "path": str(VIDEO), "target_fps": 5},
+        analyzers=[{"type": "parking_occupancy", "zones_file": "zones.json"}],
+    )
+    (directorio / "zones.json").write_text("{}", encoding="utf-8")
     assert main(["run", str(directorio), "--max-frames", "1"]) == 1
     salida = capsys.readouterr()
     assert "analyzers[0].type" in salida.err
-    assert "no hay ningun analyzer llamado 'traffic_flow'" in salida.err
+    assert "no hay ningun analyzer llamado 'parking_occupancy'" in salida.err
+    assert "Disponibles: traffic_flow" in salida.err
     assert "Traceback" not in salida.err
