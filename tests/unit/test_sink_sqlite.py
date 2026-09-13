@@ -221,6 +221,93 @@ def test_un_lote_a_caballo_entre_dos_minutos_se_reparte(tmp_path: Path) -> None:
     assert [m.mean_value for m in minutos] == [10.0, 30.0]
 
 
+# --- La acumulacion, vista desde el sink ----------------------------------------------
+#
+# QA encontro que ningun test por encima de `queries.py` comprobaba que reescribir un
+# minuto acumula. Estos lo hacen a traves del sink: dos lotes de la misma ejecucion, dos
+# ejecuciones (un reinicio) y el tramo de la ultima muestra del lote, que es lo que el
+# sink guarda entre lotes.
+
+
+def test_dos_lotes_del_mismo_minuto_acumulan_en_la_misma_fila(tmp_path: Path) -> None:
+    almacen = sink(tmp_path, batch_size=2)
+    for i in range(4):
+        almacen.write(RUN, fotograma(i), AnalyzerOutput(metrics=(metrica(10.0 * (i + 1), i),)))
+
+    _, metricas, minutos = leer(tmp_path)
+    assert len(metricas) == 4
+    (minuto,) = minutos
+    assert (minuto.samples, minuto.sum_value) == (4, 100.0)
+    assert (minuto.min_value, minuto.max_value) == (10.0, 40.0)
+
+
+def test_un_reinicio_del_worker_acumula_sobre_lo_que_ya_habia(tmp_path: Path) -> None:
+    """Un sink nuevo —engine nuevo, `run_id` nuevo, agregador nuevo— sobre la misma base:
+    es lo que ve el segundo proceso tras un `kill -9`, y no puede borrar lo del primero."""
+    primero = sink(tmp_path, batch_size=100)
+    for i in range(3):
+        primero.write(RUN, fotograma(i), AnalyzerOutput(metrics=(metrica(10.0, i * 2),)))
+    primero.flush()
+    primero.engine.dispose()
+
+    segundo = sink(tmp_path, batch_size=100)
+    otro_run = "20260824T142530Z-9f1b0c33"
+    for i in range(3):
+        segundo.write(otro_run, fotograma(i), AnalyzerOutput(metrics=(metrica(30.0, 30 + i * 2),)))
+    segundo.flush()
+
+    _, _, minutos = leer(tmp_path)
+    (minuto,) = minutos
+    assert minuto.samples == 6
+    assert (minuto.min_value, minuto.max_value) == (10.0, 30.0)
+    # Cada ejecucion cubre 3 s (su ultima muestra queda sin tramo): 10 x 3 + 30 x 3 entre 6.
+    assert minuto.seconds == pytest.approx(6.0)
+    assert minuto.mean_value == pytest.approx(20.0)
+
+
+def test_el_tramo_de_la_ultima_muestra_del_lote_llega_con_el_lote_siguiente(
+    tmp_path: Path,
+) -> None:
+    """Es el estado que el sink guarda entre lotes, y lo que hace que agrupar no pierda
+    tiempo: con lotes de una muestra, el minuto acaba cubierto igual."""
+    almacen = sink(tmp_path, batch_size=1)
+    almacen.write(RUN, fotograma(0), AnalyzerOutput(metrics=(metrica(10.0, 0.0),)))
+    (minuto,) = leer(tmp_path)[2]
+    assert (minuto.samples, minuto.seconds) == (1, 0.0)
+
+    almacen.write(RUN, fotograma(1), AnalyzerOutput(metrics=(metrica(30.0, 2.0),)))
+    (minuto,) = leer(tmp_path)[2]
+    # Ahora la de las :00 cubre [0, 1): un segundo de 10,0; la de las :02 espera.
+    assert (minuto.samples, minuto.seconds) == (2, pytest.approx(1.0))
+    assert minuto.mean_value == pytest.approx(10.0)
+
+    almacen.write(RUN, fotograma(2), AnalyzerOutput(metrics=(metrica(50.0, 4.0),)))
+    (minuto,) = leer(tmp_path)[2]
+    assert (minuto.samples, minuto.seconds) == (3, pytest.approx(3.0))
+    assert minuto.mean_value == pytest.approx((10.0 * 1 + 30.0 * 2) / 3)
+
+
+def test_con_lotes_de_uno_se_cubre_lo_mismo_que_con_un_lote_grande(tmp_path: Path) -> None:
+    """La misma serie con `batch_size: 1` y con `batch_size: 1000` deja la misma fila."""
+    muestras = [metrica(float(i % 7), i * 0.4) for i in range(150)]
+
+    def escribir_con(carpeta: Path, tamano: int) -> Any:
+        almacen = sink(carpeta, batch_size=tamano)
+        for i, muestra in enumerate(muestras):
+            almacen.write(RUN, fotograma(i), AnalyzerOutput(metrics=(muestra,)))
+        almacen.flush()
+        (minuto,) = leer(carpeta)[2]
+        return minuto
+
+    uno = escribir_con(tmp_path / "uno", 1)
+    grande = escribir_con(tmp_path / "grande", 1000)
+    assert (uno.samples, uno.sum_value) == (grande.samples, grande.sum_value)
+    assert uno.seconds == pytest.approx(grande.seconds)
+    assert uno.integral == pytest.approx(grande.integral)
+    # Hasta el punto medio entre la penultima (:59,2) y la ultima (:59,6), que espera.
+    assert uno.seconds == pytest.approx(59.4)
+
+
 # --- Los fallos -----------------------------------------------------------------------
 
 

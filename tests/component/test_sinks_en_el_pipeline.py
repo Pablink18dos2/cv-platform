@@ -260,6 +260,44 @@ def test_los_tres_sinks_configurados_escriben_en_los_tres(
     assert stats.sink_writes == 18  # 6 fotogramas x 3 sinks
 
 
+def test_dos_ejecuciones_seguidas_acumulan_en_los_mismos_minutos(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """El reinicio del worker, visto desde el pipeline entero: `cvp run` dos veces sobre la
+    misma base, con el mismo video de mentira, y los minutos suman en vez de reemplazarse.
+
+    La segunda ejecucion estrena `run_id` (los dos arrancan en el mismo segundo del reloj
+    falso y el sufijo los distingue), sink nuevo y agregador nuevo; la fila del minuto es la
+    misma.
+    """
+    monkeypatch.chdir(tmp_path)
+    primera = corredor(configuracion(tmp_path)).run()
+    segunda = corredor(configuracion(tmp_path)).run()
+    assert primera.run_id != segunda.run_id
+
+    motor = crear_engine("sqlite:///data/cvp.sqlite3")
+    try:
+        with Session(motor) as session:
+            minutos = minutos_de(session, PROYECTO)
+            assert len(metricas_de(session, primera.run_id)) == 6
+            assert len(metricas_de(session, segunda.run_id)) == 6
+    finally:
+        motor.dispose()
+
+    # Los mismos tres minutos, cada uno con el doble de muestras que con una ejecucion.
+    assert [m.samples for m in minutos] == [6, 4, 2]
+    # Y el tiempo tambien suma. La fuente falsa reproduce la misma linea de tiempo las dos
+    # veces, asi que las dos ejecuciones cubren **el mismo** minuto y la fila junta 2 x 60 s:
+    # es lo que pasa con un fichero reproducido dos veces, y la media sigue siendo la
+    # ponderada de las dos observaciones. Con un directo nunca se solapan.
+    assert minutos[0].seconds == pytest.approx(2 * 60.0)
+    # El segundo minuto: :75 cubre [60, 87,5) y :100 cubre [87,5, 115): 55 s por ejecucion.
+    assert minutos[1].seconds == pytest.approx(2 * 55.0)
+    # El tercero: su unica muestra es la ultima de cada ejecucion y no tiene tramo.
+    assert minutos[2].seconds == 0.0
+    assert (minutos[0].min_value, minutos[0].max_value) == (0.0, 2.0)
+
+
 def test_la_ejecucion_queda_apuntada_con_su_proyecto(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

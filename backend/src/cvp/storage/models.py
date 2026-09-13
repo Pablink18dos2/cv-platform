@@ -227,8 +227,10 @@ class MetricMinute(SQLModel, table=True):
 
     Se guardan `integral` y `sum_value` y no solo la media porque son lo unico acumulable:
     promediar dos medias solo vale si los dos trozos cubren el mismo tiempo (o tienen las
-    mismas muestras), y no lo hacen. `seconds` nunca pasa de 60: una muestra solo escribe
-    tiempo en su propio minuto.
+    mismas muestras), y no lo hacen. Una muestra solo escribe tiempo en su propio minuto,
+    asi que una ejecucion no cubre mas de 60 s por minuto; dos ejecuciones que midan el
+    mismo minuto —un fichero reproducido dos veces— suman las dos, y la media sigue siendo
+    la ponderada de las dos observaciones.
     """
 
     __tablename__ = "metric_minute"
