@@ -531,20 +531,39 @@ class _AnalyzerBase(_ModeloBase):
 class Line(_ModeloBase):
     """Una linea de conteo, en fracciones del fotograma.
 
-    `positive_direction` es la etiqueta del sentido que cuenta como positivo; sale tal cual
-    en las metricas, asi que se escribe como se quiera leer en el dashboard.
+    `positive_direction` y `negative_direction` son las etiquetas de los dos sentidos de
+    cruce; salen tal cual en las metricas, asi que se escriben como se quieran leer en el
+    dashboard ("norte" y "sur", "entra" y "sale"). **Las dos son obligatorias** (decision 2
+    de #10): el dashboard necesita dos series por linea con sus nombres, e inventar un
+    `"no-norte"` en el analizador seria trasladar al frontal una decision que es del YAML.
+
+    Cual de los dos lados es el positivo lo fija la geometria, no el nombre: es el lado que
+    queda **a la derecha de `p1 -> p2` visto en pantalla** (`cvp.analyzers.geometry`). Con una
+    linea escrita de izquierda a derecha, el lado positivo es el de abajo, y
+    `positive_direction` es el sentido de quien cruza hacia abajo.
     """
 
     id: Annotated[str, Field(min_length=1)]
     p1: Point
     p2: Point
     positive_direction: Annotated[str, Field(min_length=1)]
+    negative_direction: Annotated[str, Field(min_length=1)]
 
     @model_validator(mode="after")
     def _linea_con_longitud(self) -> Line:
         if (self.p1.x, self.p1.y) == (self.p2.x, self.p2.y):
             raise ValueError(
                 "p1 y p2 son el mismo punto, y una línea de longitud cero no la cruza nadie"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _dos_sentidos_distintos(self) -> Line:
+        if self.positive_direction == self.negative_direction:
+            raise ValueError(
+                "positive_direction y negative_direction son el mismo sentido "
+                f"({self.positive_direction!r}), y son lo que distingue las dos series de la "
+                "línea en el dashboard"
             )
         return self
 

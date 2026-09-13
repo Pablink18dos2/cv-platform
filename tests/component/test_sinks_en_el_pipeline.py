@@ -55,7 +55,13 @@ PROJECT_YAML: dict[str, Any] = {
             "type": "traffic_flow",
             "every_n_frames": 1,
             "lines": [
-                {"id": "principal", "p1": [0.1, 0.2], "p2": [0.8, 0.7], "positive_direction": "n"}
+                {
+                    "id": "principal",
+                    "p1": [0.1, 0.2],
+                    "p2": [0.8, 0.7],
+                    "positive_direction": "n",
+                    "negative_direction": "s",
+                }
             ],
         }
     ],

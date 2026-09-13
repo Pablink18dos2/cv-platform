@@ -229,7 +229,13 @@ analyzers:
   - type: traffic_flow
     every_n_frames: 1
     lines:
-      - { id: principal, p1: [0.06, 0.59], p2: [0.61, 0.56], positive_direction: norte }
+      # Los dos sentidos llevan nombre: son las dos series de la línea en el dashboard. El
+      # lado positivo es el que queda a la derecha de p1 -> p2 visto en pantalla.
+      - id: principal
+        p1: [0.06, 0.59]
+        p2: [0.61, 0.56]
+        positive_direction: norte
+        negative_direction: sur
   - type: parking_occupancy
     every_n_frames: 10          # ~0,5 fps: una plaza no cambia en dos segundos
     zones_file: zones.json      # relativo a este fichero; sus polígonos, en fracciones

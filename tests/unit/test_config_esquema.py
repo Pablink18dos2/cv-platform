@@ -33,6 +33,7 @@ MINIMO: dict[str, Any] = {
                     "p1": [0.1, 0.2],
                     "p2": [0.8, 0.7],
                     "positive_direction": "norte",
+                    "negative_direction": "sur",
                 }
             ],
         }
@@ -341,6 +342,36 @@ def test_una_linea_de_longitud_cero_no_la_cruza_nadie(tmp_path: Path) -> None:
     assert problemas(tmp_path, analyzers=[{"type": "traffic_flow", "lines": [linea]}])[
         0
     ].startswith("analyzers[0].lines[0]:")
+
+
+def test_una_linea_lleva_los_dos_sentidos_con_su_nombre(tmp_path: Path) -> None:
+    """El dashboard necesita dos series por linea, con sus nombres: "hacia el norte" y
+    "hacia el sur". Inventar un `"no-norte"` en las metricas seria trasladar al frontal
+    una decision que corresponde al YAML (decision 2 de #10)."""
+    linea = carga(tmp_path).analyzers[0].lines[0]
+    assert (linea.positive_direction, linea.negative_direction) == ("norte", "sur")
+
+
+def test_negative_direction_es_obligatorio(tmp_path: Path) -> None:
+    linea = dict(MINIMO["analyzers"][0]["lines"][0])
+    del linea["negative_direction"]
+    assert problemas(tmp_path, analyzers=[{"type": "traffic_flow", "lines": [linea]}]) == (
+        "analyzers[0].lines[0].negative_direction: campo obligatorio que falta",
+    )
+
+
+@pytest.mark.parametrize("sentido", ["norte", ""])
+def test_los_dos_sentidos_de_una_linea_no_pueden_coincidir_ni_estar_vacios(
+    tmp_path: Path, sentido: str
+) -> None:
+    linea = MINIMO["analyzers"][0]["lines"][0] | {"negative_direction": sentido}
+    (problema,) = problemas(tmp_path, analyzers=[{"type": "traffic_flow", "lines": [linea]}])
+    if sentido:
+        assert problema.startswith(
+            "analyzers[0].lines[0]: positive_direction y negative_direction son el mismo sentido"
+        )
+    else:
+        assert problema.startswith("analyzers[0].lines[0].negative_direction: no puede estar vacío")
 
 
 def test_parking_occupancy_y_su_histeresis(tmp_path: Path) -> None:

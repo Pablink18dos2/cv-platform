@@ -15,7 +15,7 @@ tracker:
 analyzers:
   - type: traffic_flow
     lines:
-      - { id: principal, p1: [0.06, 0.59], p2: [0.61, 0.56], positive_direction: norte }
+      - { id: principal, p1: [0.06, 0.59], p2: [0.61, 0.56], positive_direction: norte, negative_direction: sur }
 
 sinks:
   - { type: sqlite }

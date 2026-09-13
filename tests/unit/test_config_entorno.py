@@ -32,6 +32,7 @@ MINIMO: dict[str, Any] = {
                     "p1": [0.1, 0.2],
                     "p2": [0.8, 0.7],
                     "positive_direction": "norte",
+                    "negative_direction": "sur",
                 }
             ],
         }
@@ -88,7 +89,12 @@ def test_se_expande_dentro_de_la_cadena_y_varias_veces(tmp_path: Path) -> None:
 
 def test_se_expande_a_cualquier_profundidad_listas_incluidas(tmp_path: Path) -> None:
     entorno = {"CLASE": "truck", "SENTIDO": "sur"}
-    lineas = [MINIMO["analyzers"][0]["lines"][0] | {"positive_direction": "${SENTIDO}"}]
+    # Los dos sentidos tienen que ser distintos (#10), asi que al expandir el positivo a
+    # "sur" el negativo deja de poder ser el "sur" del proyecto minimo.
+    lineas = [
+        MINIMO["analyzers"][0]["lines"][0]
+        | {"positive_direction": "${SENTIDO}", "negative_direction": "norte"}
+    ]
     config = carga(
         tmp_path,
         entorno,

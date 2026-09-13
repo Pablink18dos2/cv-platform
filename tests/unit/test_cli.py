@@ -32,6 +32,7 @@ MINIMO = {
                     "p1": [0.1, 0.2],
                     "p2": [0.8, 0.7],
                     "positive_direction": "norte",
+                    "negative_direction": "sur",
                 }
             ],
         }

@@ -35,6 +35,8 @@ ROTOS = {
     "roto-id-invalido.yaml": "id:",
     "roto-imgsz-no-multiplo.yaml": "detector.imgsz:",
     "roto-linea-longitud-cero.yaml": "analyzers[0].lines[0]:",
+    "roto-linea-sentidos-iguales.yaml": "analyzers[0].lines[0]: positive_direction y "
+    "negative_direction son el mismo sentido ('norte')",
     "roto-lineas-id-duplicado.yaml": "analyzers[0]:",
     "roto-max-retries-negativo.yaml": "source.reconnect.max_retries:",
     "roto-name-vacio.yaml": "name:",
@@ -76,6 +78,7 @@ MINIMO = {
                     "p1": [0.1, 0.2],
                     "p2": [0.8, 0.7],
                     "positive_direction": "norte",
+                    "negative_direction": "sur",
                 }
             ],
         }
