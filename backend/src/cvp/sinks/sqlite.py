@@ -43,7 +43,13 @@ from typing import Any
 from sqlmodel import Session
 
 from cvp.core import AnalyzerOutput, Event, Frame, Metric, register_sink
-from cvp.storage import URL_POR_DEFECTO, crear_engine, crear_esquema, escribir_lote
+from cvp.storage import (
+    URL_POR_DEFECTO,
+    AgregadorPorMinuto,
+    crear_engine,
+    crear_esquema,
+    escribir_lote,
+)
 
 __all__ = ["SqliteSink"]
 
@@ -94,6 +100,10 @@ class SqliteSink:
         self._run_id: str | None = None
         self._eventos: list[Event] = []
         self._metricas: list[Metric] = []
+        # El estado entre lotes de la agregacion por minuto: la ultima muestra de cada
+        # serie, cuyo tramo de tiempo no se conoce hasta que llega la siguiente. Vive en el
+        # sink porque el sink es quien ve todos los lotes de una ejecucion.
+        self._agregador = AgregadorPorMinuto()
         self._ultimo_volcado = self._timer()
 
     @classmethod
@@ -147,6 +157,11 @@ class SqliteSink:
         # Se vacia **antes** de escribir: si la escritura falla, el lote se descarta en vez
         # de crecer sin limite hasta llevarse por delante al worker.
         self._eventos, self._metricas = [], []
+        # Los agregados se calculan fuera de la transaccion y el agregador avanza aunque la
+        # escritura falle: un lote descartado se lleva sus muestras y tambien el tramo de
+        # tiempo que cerraba. Reintentar no esta sobre la mesa (ver arriba), y dejar el
+        # agregador atras haria que el lote siguiente cerrara un tramo sobre un hueco.
+        agregados = self._agregador.agregar(metricas)
         try:
             with Session(self.engine) as session:
                 escribir_lote(
@@ -156,6 +171,7 @@ class SqliteSink:
                     project_name=self.project_name,
                     eventos=eventos,
                     metricas=metricas,
+                    agregados=agregados,
                 )
                 session.commit()
         except Exception as exc:

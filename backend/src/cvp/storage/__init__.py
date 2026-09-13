@@ -10,7 +10,15 @@ Este paquete **no sabe nada de fotogramas ni de sinks**: recibe `Event` y `Metri
 
 from __future__ import annotations
 
-from cvp.storage.aggregation import Agregado, ClaveMinuto, agregar_por_minuto, minuto_de
+from cvp.storage.aggregation import (
+    HUECO_MAXIMO_S,
+    Agregado,
+    AgregadorPorMinuto,
+    ClaveMinuto,
+    ClaveSerie,
+    agregar_por_minuto,
+    minuto_de,
+)
 from cvp.storage.engine import URL_POR_DEFECTO, crear_engine, crear_esquema, journal_mode
 from cvp.storage.models import (
     EventRow,
@@ -38,10 +46,13 @@ from cvp.storage.run_id import (
 )
 
 __all__ = [
+    "HUECO_MAXIMO_S",
     "RUN_ID_RE",
     "URL_POR_DEFECTO",
     "Agregado",
+    "AgregadorPorMinuto",
     "ClaveMinuto",
+    "ClaveSerie",
     "EventRow",
     "MetricMinute",
     "MetricRow",

@@ -210,17 +210,25 @@ class MetricRow(SQLModel, table=True):
 class MetricMinute(SQLModel, table=True):
     """El agregado de un minuto para un `(analyzer, name, labels)` de un proyecto.
 
-    Guarda `samples`, `sum_value`, `min_value` y `max_value`; la media se lee de
-    `mean_value`, que se recalcula en cada acumulacion como `sum_value / samples`. La suma
-    esta ademas de la media porque es lo unico que permite **acumular**: sin ella, sumar un
-    lote nuevo a un minuto que ya existia obligaria a promediar medias, que es falso en
-    cuanto los dos trozos tienen distinto numero de muestras.
+    Dos familias de columnas:
 
-    **`samples` es informativo, nunca un divisor de tiempo.** Desde #23 la tasa efectiva se
-    adapta a lo que el analisis sostiene (QA midio 5,0 -> 2,74 -> 5,0 fps en una misma
-    ejecucion), asi que el numero de muestras de un minuto no es constante y no dice cuanto
-    duro el minuto. Lo que dice el tiempo es el `minute`, que sale del timestamp de cada
-    muestra. Ver `cvp.storage.aggregation`.
+    - **De las muestras**: `samples`, `sum_value`, `min_value`, `max_value`.
+    - **Del tiempo**: `seconds`, los segundos del minuto que las muestras cubren, e
+      `integral`, la suma de valor x segundos. **`mean_value` es `integral / seconds`**: una
+      media en el tiempo, no una media por muestra. Se recalcula en cada acumulacion.
+
+    La media por muestra (`sum_value / samples`) esta mal desde #23: la tasa efectiva se
+    mueve dentro del minuto y se mueve con sesgo, porque el analisis va mas lento cuando
+    hay mas objetos en escena; dividir por muestras infra-representa justo los minutos con
+    mas trafico. `samples` se guarda como cuenta y `sum_value` como suma, y ninguno de los
+    dos es un divisor de tiempo. `mean_value` solo cae a `sum_value / samples` mientras el
+    minuto no tiene tiempo cubierto, que es el caso de una unica muestra cuyo tramo aun no
+    se ha cerrado (`cvp.storage.aggregation` explica el borde).
+
+    Se guardan `integral` y `sum_value` y no solo la media porque son lo unico acumulable:
+    promediar dos medias solo vale si los dos trozos cubren el mismo tiempo (o tienen las
+    mismas muestras), y no lo hacen. `seconds` nunca pasa de 60: una muestra solo escribe
+    tiempo en su propio minuto.
     """
 
     __tablename__ = "metric_minute"
@@ -243,6 +251,8 @@ class MetricMinute(SQLModel, table=True):
     labels: str
     samples: int
     sum_value: float
-    mean_value: float
     min_value: float
     max_value: float
+    seconds: float
+    integral: float
+    mean_value: float

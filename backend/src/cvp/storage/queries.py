@@ -76,12 +76,19 @@ def escribir_lote(
     project_name: str,
     eventos: Sequence[Event] = (),
     metricas: Sequence[Metric] = (),
+    agregados: Mapping[ClaveMinuto, Agregado] | None = None,
 ) -> None:
     """Escribe un lote entero: eventos, metricas y los minutos que tocan.
 
     No hace `commit`: quien llama decide la frontera de la transaccion, y en el sink esa
     frontera es el lote completo. Asi, o entran las filas crudas **y** sus agregados, o no
     entra nada; un fallo a mitad no deja un minuto contando muestras que no estan.
+
+    `agregados` es lo que este lote anade a cada minuto. El sink lo calcula con su
+    `AgregadorPorMinuto`, que recuerda entre lotes la ultima muestra de cada serie y por
+    eso escribe el tramo de esa muestra en el lote siguiente. Sin `agregados` se calcula
+    aqui de un solo lote, y entonces la ultima muestra de cada serie se queda sin tramo:
+    vale para una escritura suelta, no para un worker.
     """
     creado = instante_de_run_id(run_id)
     asegurar_proyecto(session, project_id, project_name, creado)
@@ -99,7 +106,9 @@ def escribir_lote(
     for metrica in metricas:
         session.add(MetricRow.from_metric(run_id, metrica))
 
-    acumular_minutos(session, project_id, agregar_por_minuto(metricas))
+    if agregados is None:
+        agregados = agregar_por_minuto(metricas)
+    acumular_minutos(session, project_id, agregados)
     _avanzar_fin_de_run(session, run_id, eventos, metricas)
 
 
@@ -111,6 +120,9 @@ def acumular_minutos(
     **Acumula, no reemplaza.** Un worker que se reinicia a mitad de minuto estrena
     `run_id`, y el agregado del minuto cuelga del proyecto justamente para que las muestras
     de antes y las de despues acaben en la misma fila en vez de partir la serie en dos.
+
+    Se acumulan las dos familias por separado —muestras y tiempo—, porque un lote puede
+    traer solo tiempo para un minuto: el tramo de la muestra que llego en el lote anterior.
     """
     for clave, agregado in agregados.items():
         fila = session.exec(
@@ -123,32 +135,35 @@ def acumular_minutos(
             )
         ).first()
         if fila is None:
-            session.add(
-                MetricMinute(
-                    project_id=project_id,
-                    minute=clave.minute,
-                    analyzer=clave.analyzer,
-                    name=clave.name,
-                    labels=clave.labels,
-                    samples=agregado.samples,
-                    sum_value=agregado.sum_value,
-                    mean_value=agregado.mean_value,
-                    min_value=agregado.min_value,
-                    max_value=agregado.max_value,
-                )
+            fila = MetricMinute(
+                project_id=project_id,
+                minute=clave.minute,
+                analyzer=clave.analyzer,
+                name=clave.name,
+                labels=clave.labels,
+                samples=0,
+                sum_value=0.0,
+                min_value=0.0,
+                max_value=0.0,
+                seconds=0.0,
+                integral=0.0,
+                mean_value=0.0,
             )
-            continue
         unido = Agregado(
             samples=fila.samples,
             sum_value=fila.sum_value,
             min_value=fila.min_value,
             max_value=fila.max_value,
+            seconds=fila.seconds,
+            integral=fila.integral,
         ).unido_con(agregado)
         fila.samples = unido.samples
         fila.sum_value = unido.sum_value
-        fila.mean_value = unido.mean_value
         fila.min_value = unido.min_value
         fila.max_value = unido.max_value
+        fila.seconds = unido.seconds
+        fila.integral = unido.integral
+        fila.mean_value = unido.mean_value
         session.add(fila)
 
 

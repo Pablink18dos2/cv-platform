@@ -250,15 +250,58 @@ def test_reescribir_un_minuto_acumula_y_no_reemplaza(motor: Engine) -> None:
     assert (minuto.min_value, minuto.max_value) == (10.0, 20.0)
 
 
+def test_reescribir_un_minuto_acumula_tambien_el_tiempo_cubierto(motor: Engine) -> None:
+    """El reinicio, con tramos de verdad: cada ejecucion cubre su trozo del minuto y la fila
+    acaba con la suma de los dos, no con el ultimo.
+
+    La primera ejecucion mide 10,0 de las :00 a las :20 y muere; la segunda arranca a las
+    :40 y mide 30,0 hasta el final del minuto. La media del minuto es la temporal sobre lo
+    cubierto, y no la de las muestras ni la de la ultima ejecucion.
+    """
+    escribir(
+        motor,
+        metricas=[metrica(INICIO + timedelta(seconds=s), 10.0) for s in range(0, 21, 2)],
+    )
+    escribir(
+        motor,
+        run_id=OTRO_RUN,
+        metricas=[metrica(INICIO + timedelta(seconds=s), 30.0) for s in range(40, 61, 2)],
+    )
+
+    with Session(motor) as session:
+        primero, segundo = minutos_de(session, PROYECTO)
+    # La primera ejecucion cubre 19 s (su muestra de las :20 queda sin tramo) y la segunda
+    # 20 s (la de las :58 llega hasta la frontera). 10 x 19 + 30 x 20, entre 39.
+    assert primero.seconds == pytest.approx(39.0)
+    assert primero.mean_value == pytest.approx(790.0 / 39.0)
+    assert primero.samples == 21
+    assert (primero.min_value, primero.max_value) == (10.0, 30.0)
+    # La muestra de las :60 es del minuto siguiente.
+    assert segundo.samples == 1
+
+
 def test_la_media_acumulada_no_es_la_media_de_las_medias(motor: Engine) -> None:
-    """Dos trozos del mismo minuto con distinto numero de muestras: promediar medias daria
-    3,0 y la respuesta es 4,0. Es el motivo por el que la tabla guarda la suma."""
-    escribir(motor, metricas=[metrica(INICIO + timedelta(seconds=i), 5.0) for i in range(3)])
-    escribir(motor, run_id=OTRO_RUN, metricas=[metrica(INICIO + timedelta(seconds=30), 1.0)])
+    """Dos trozos del mismo minuto que cubren distinto tiempo: promediar medias daria 3,0 y
+    la respuesta es 4,0. Es el motivo por el que la tabla guarda la integral y los segundos.
+
+    Cada escritura suelta lleva dos muestras, y solo la primera cierra su tramo (la segunda
+    queda pendiente): el primer trozo es 5,0 durante 3 s y el segundo 1,0 durante 1 s.
+    """
+    escribir(motor, metricas=[metrica(INICIO, 5.0), metrica(INICIO + timedelta(seconds=6), 5.0)])
+    escribir(
+        motor,
+        run_id=OTRO_RUN,
+        metricas=[
+            metrica(INICIO + timedelta(seconds=30), 1.0),
+            metrica(INICIO + timedelta(seconds=32), 1.0),
+        ],
+    )
     with Session(motor) as session:
         (minuto,) = minutos_de(session, PROYECTO)
     assert minuto.samples == 4
-    assert minuto.mean_value == 4.0
+    # 5,0 x 3 s + 1,0 x 1 s, entre 4 s cubiertos.
+    assert minuto.seconds == pytest.approx(4.0)
+    assert minuto.mean_value == pytest.approx(4.0)
 
 
 def test_un_lote_que_cruza_una_frontera_de_minuto_no_se_va_entero_a_un_lado(
@@ -277,8 +320,11 @@ def test_un_lote_que_cruza_una_frontera_de_minuto_no_se_va_entero_a_un_lado(
     )
     with Session(motor) as session:
         primero, segundo = minutos_de(session, PROYECTO)
-    assert (primero.samples, primero.mean_value) == (2, 15.0)
-    assert (segundo.samples, segundo.mean_value) == (2, 35.0)
+    assert (primero.samples, primero.sum_value) == (2, 30.0)
+    assert (segundo.samples, segundo.sum_value) == (2, 70.0)
+    # Y el tiempo tampoco cruza la frontera: :59 cubre hasta las :60 y :60 empieza ahi.
+    assert primero.seconds == pytest.approx(2.0)
+    assert segundo.seconds == pytest.approx(0.5)
 
 
 def test_cada_combinacion_de_analizador_nombre_y_etiquetas_es_una_fila(motor: Engine) -> None:
@@ -311,9 +357,11 @@ def test_la_clave_unica_del_minuto_no_deja_duplicar_una_celda(motor: Engine) -> 
                 labels=existente.labels,
                 samples=1,
                 sum_value=1.0,
-                mean_value=1.0,
                 min_value=1.0,
                 max_value=1.0,
+                seconds=0.0,
+                integral=0.0,
+                mean_value=1.0,
             )
         )
         with pytest.raises(IntegrityError, match="UNIQUE"):
