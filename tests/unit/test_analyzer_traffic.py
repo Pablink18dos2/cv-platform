@@ -130,6 +130,30 @@ def test_con_k_1_el_mismo_temblor_produce_19_cruces_que_es_lo_que_el_parametro_e
     assert sentidos(salidas) == ["sur", "norte"] * 9 + ["sur"]
 
 
+@pytest.mark.parametrize("k", [2, 3])
+def test_un_track_que_aparece_temblando_sobre_la_linea_no_cruza_hasta_asentarse(k: int) -> None:
+    """El coche que entra en escena justo encima de la linea: sus **primeras** observaciones
+    alternan de lado antes de asentarse. Ninguna de ellas puede confirmar un lado —cada
+    cambio de candidato tiene que reiniciar la racha a 1, tambien antes de la primera
+    confirmacion—, asi que al asentarse arriba no hay cruce, y solo lo hay cuando despues
+    cruza de verdad. (Es el mutante que sobrevivio a QA: con la racha acumulandose entre
+    candidatos, la alternancia confirmaba un lado a destiempo y salia un `norte` falso.)"""
+    a = analizador(min_frames_on_side=k)
+    arriba, abajo = 0.49, 0.51
+    # k observaciones alternando, empezando arriba. Ninguna confirma nada. Con la racha
+    # acumulandose entre candidatos, la k-esima confirmaria su lado (`ultimo`) a destiempo.
+    mezcladas = [arriba, abajo] * k
+    mezcladas = mezcladas[:k]
+    ultimo, contrario = mezcladas[-1], (abajo if mezcladas[-1] == arriba else arriba)
+    # Despues se asienta k veces en el lado contrario al de la k-esima: es la primera
+    # confirmacion de verdad y no viene de ninguna parte, asi que no hay cruce.
+    salidas = recorrer(a, trayectoria(mezcladas + [contrario] * k))
+    assert cruces(salidas) == [], "asentarse en el primer lado no es un cruce"
+    # Y solo ahora cruza de verdad, hacia `ultimo`: un unico cruce.
+    salidas = recorrer(a, trayectoria([ultimo] * k), desde=2 * k)
+    assert sentidos(salidas) == ["norte" if ultimo == arriba else "sur"]
+
+
 def test_el_valor_por_defecto_de_min_frames_on_side_es_2() -> None:
     assert analizador().min_frames_on_side == 2
 
