@@ -245,6 +245,9 @@ class FakeAnalyzer:
         self.every_n_frames = every_n_frames
         self.al_procesar = al_procesar
         self.vistos: list[int] = []
+        # Lo que el runner le paso en cada llamada: es lo que fija que las detecciones
+        # crudas llegan al analizador junto a los tracks (decision 1 de #11).
+        self.recibido: list[tuple[list[Track], list[Detection]]] = []
         self.creada_desde: Any = None
 
     @classmethod
@@ -253,8 +256,11 @@ class FakeAnalyzer:
         analizador.creada_desde = cfg
         return analizador
 
-    def process(self, frame: Frame, tracks: list[Track]) -> AnalyzerOutput:
+    def process(
+        self, frame: Frame, tracks: list[Track], detections: list[Detection]
+    ) -> AnalyzerOutput:
         self.vistos.append(frame.index)
+        self.recibido.append((list(tracks), list(detections)))
         if self.al_procesar is not None:
             self.al_procesar(frame)
         return AnalyzerOutput(
@@ -597,6 +603,36 @@ def test_el_run_id_es_el_mismo_en_toda_la_ejecucion_y_distinto_en_la_siguiente()
 def test_un_analizador_con_cadencia_invalida_se_rechaza_al_construir_el_runner() -> None:
     with pytest.raises(ValueError, match="every_n_frames"):
         runner(analyzers=(FakeAnalyzer(every_n_frames=0),))
+
+
+class TrackerQueDescarta(FakeTracker):
+    """Como ByteTrack con el umbral por defecto: confirma solo una parte de lo que ve."""
+
+    def update(self, frame: Frame, detections: list[Detection]) -> list[Track]:
+        self.updates.append(frame.index)
+        return [Track.from_detection(d, track_id=i + 1) for i, d in enumerate(detections[:1])]
+
+
+def test_el_analizador_recibe_los_tracks_y_las_detecciones_crudas_del_mismo_fotograma() -> None:
+    """Decision 1 de #11, vista desde el runner: el tracker descarta lo que no confirma
+    (aqui 3 detecciones -> 1 track), y el analizador tiene que recibir **las dos** listas
+    tal cual salieron del detector y del tracker, para que la ocupacion de una plaza no
+    dependa de la identidad."""
+    tres = [_deteccion(10.0), _deteccion(100.0), _deteccion(200.0)]
+    analizador = FakeAnalyzer()
+    corredor = runner(
+        source=FakeSource(frames=2),
+        detector=FakeDetector(detecciones=tres),
+        tracker=TrackerQueDescarta(frame_rate=5.0),
+        analyzers=(analizador,),
+    )
+
+    corredor.run()
+
+    assert len(analizador.recibido) == 2
+    for tracks, detecciones in analizador.recibido:
+        assert detecciones == tres
+        assert [t.track_id for t in tracks] == [1]
 
 
 # --------------------------------------------------------------------------------------

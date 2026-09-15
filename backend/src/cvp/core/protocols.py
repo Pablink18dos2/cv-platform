@@ -87,9 +87,22 @@ class Tracker(Protocol):
 class Analyzer(Protocol):
     """La logica de negocio, y el unico bloque que un proyecto nuevo suele tocar.
 
-    No sabe de donde vino el fotograma ni que modelo lo detecto: solo ve `Frame` y
-    `list[Track]`. Por eso se testea con listas de tracks escritas a mano, sin video,
-    sin modelo y sin red.
+    No sabe de donde vino el fotograma ni que modelo lo detecto: solo ve `Frame`,
+    `list[Track]` y `list[Detection]`. Por eso se testea con listas escritas a mano, sin
+    video, sin modelo y sin red.
+
+    **`process` recibe los tracks y tambien las detecciones crudas, y esa firma es una
+    decision de #11.** Son dos preguntas distintas: los tracks responden a *quien es quien*
+    (identidad, lo que el conteo de trafico necesita para no contar el mismo coche dos
+    veces) y las detecciones a *que hay* (presencia, lo que la ocupacion de una plaza
+    necesita). El tracker **descarta lo que no confirma** —en la escena del proyecto 01,
+    con el umbral por defecto sigue 5,4 de los ~14 vehiculos que el detector ve
+    (`_docs/rendimiento.md`, #7)—, asi que un analizador de presencia construido sobre
+    tracks daria una ocupacion sistematicamente baja sin que nada lo delatara. Y el umbral
+    de activacion del tracker es un mando global que no se puede poner a la vez alto para
+    uno y bajo para el otro. Mismo criterio que `Sink.write(frame)`: un parametro que
+    algunas implementaciones ignoran cuesta menos que un caso especial en el runner.
+    `traffic_flow` ignora las detecciones y lo dice; `parking_occupancy` ignora los tracks.
 
     `every_n_frames` es su propio submuestreo: la ocupacion de un parking no cambia en
     dos segundos y no hace falta recalcularla en cada fotograma.
@@ -98,7 +111,9 @@ class Analyzer(Protocol):
     name: str
     every_n_frames: int
 
-    def process(self, frame: Frame, tracks: list[Track]) -> AnalyzerOutput: ...
+    def process(
+        self, frame: Frame, tracks: list[Track], detections: list[Detection]
+    ) -> AnalyzerOutput: ...
 
     def annotate(self, image: np.ndarray, tracks: list[Track]) -> np.ndarray: ...
 

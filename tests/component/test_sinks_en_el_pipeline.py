@@ -27,6 +27,7 @@ from sqlmodel import Session
 from cvp.core import (
     SINKS,
     AnalyzerOutput,
+    Detection,
     Event,
     Frame,
     Metric,
@@ -152,7 +153,9 @@ class AnalizadorFalso:
     def from_config(cls, cfg: Any) -> AnalizadorFalso:
         return cls(every_n_frames=cfg.every_n_frames)
 
-    def process(self, frame: Frame, tracks: list[Track]) -> AnalyzerOutput:
+    def process(
+        self, frame: Frame, tracks: list[Track], detections: list[Detection]
+    ) -> AnalyzerOutput:
         metrica = Metric(
             analyzer=self.name,
             name="vehicles_in_scene",

@@ -450,7 +450,10 @@ class PipelineRunner:
             # ejecuciones (indices 0, 10 y 20).
             if frame.index % analizador.every_n_frames:
                 continue
-            salida = analizador.process(frame, tracks)
+            # Los tracks **y** las detecciones crudas, desde #11: el tracker descarta lo que
+            # no confirma, y un analizador de presencia (la ocupacion de una plaza) no puede
+            # pagar ese filtro. Cada analizador usa lo que necesita e ignora lo otro.
+            salida = analizador.process(frame, tracks, detecciones)
             self.stats.analyzer_calls[analizador.name] = (
                 self.stats.analyzer_calls.get(analizador.name, 0) + 1
             )

@@ -47,7 +47,7 @@ from cvp.analyzers.drawing import (
     dibujar_punto,
 )
 from cvp.analyzers.geometry import GeometriaPorFotograma, LineaDeConteo, LineaEnPixeles
-from cvp.core import AnalyzerOutput, Event, Frame, Metric, Track
+from cvp.core import AnalyzerOutput, Detection, Event, Frame, Metric, Track
 from cvp.core.registry import ANALYZERS
 
 if TYPE_CHECKING:  # pragma: no cover - solo para el tipado
@@ -221,7 +221,18 @@ class TrafficFlowAnalyzer:
 
     # --- process --------------------------------------------------------------------------
 
-    def process(self, frame: Frame, tracks: list[Track]) -> AnalyzerOutput:
+    def process(
+        self, frame: Frame, tracks: list[Track], detections: list[Detection]
+    ) -> AnalyzerOutput:
+        """Cuenta cruces sobre los **tracks** e ignora `detections` a proposito.
+
+        Un cruce necesita identidad: sin `track_id` se contaria el mismo coche una vez
+        por fotograma. Las detecciones crudas estan en la firma porque `parking_occupancy`
+        (#11) las necesita —una plaza esta ocupada aunque el coche de dentro no tenga
+        identidad confirmada— y un parametro que este analizador no usa cuesta menos que
+        un caso especial en el runner.
+        """
+        del detections
         lineas = self._geometria.para(frame)
         eventos: list[Event] = []
         metricas: list[Metric] = []

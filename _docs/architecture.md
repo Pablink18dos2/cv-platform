@@ -99,7 +99,9 @@ sin tracker contaríamos el mismo coche una vez por fotograma.
 class Analyzer(Protocol):
     name: str
     every_n_frames: int
-    def process(self, frame: Frame, tracks: list[Track]) -> AnalyzerOutput: ...
+    def process(
+        self, frame: Frame, tracks: list[Track], detections: list[Detection]
+    ) -> AnalyzerOutput: ...
     def annotate(self, image: np.ndarray, tracks: list[Track]) -> np.ndarray: ...
 ```
 
@@ -119,8 +121,21 @@ Implementaciones MVP:
   para nada.
 
 Un analizador **no sabe** de dónde vino el fotograma ni qué modelo lo detectó. Solo ve
-`Frame` y `list[Track]`. Por eso se puede testear con listas de tracks escritas a mano,
-sin vídeo, sin modelo y sin red.
+`Frame`, `list[Track]` y `list[Detection]`. Por eso se puede testear con listas escritas a
+mano, sin vídeo, sin modelo y sin red.
+
+**`process` recibe los tracks y también las detecciones crudas, y es una decisión de #11.**
+Son dos preguntas distintas: los tracks responden a *quién es quién* (identidad, lo que el
+conteo de tráfico necesita para no contar el mismo coche una vez por fotograma) y las
+detecciones a *qué hay* (presencia, lo que la ocupación de una plaza necesita). El tracker
+**descarta lo que no confirma**: en la escena del proyecto 01, con el umbral por defecto sigue
+5,4 de los ~14 vehículos que el detector ve ([rendimiento.md](rendimiento.md), #7), así que un
+analizador de presencia construido sobre tracks daría una ocupación **sistemáticamente baja**
+sin que nada lo delatara; y el umbral de activación del tracker es un mando global que no se
+puede poner a la vez alto para uno y bajo para el otro. Es el mismo criterio que
+`Sink.write(frame)` en #9: un parámetro que algunas implementaciones ignoran cuesta menos que
+un caso especial en el runner. `traffic_flow` ignora las detecciones y lo dice en su docstring;
+`parking_occupancy` ignora los tracks.
 
 **Cómo se escribe uno.** `traffic_flow` (#10) es el molde, y lo que fija vale para los
 siguientes:

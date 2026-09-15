@@ -23,7 +23,7 @@ import pytest
 
 from cvp.analyzers import TrafficFlowAnalyzer
 from cvp.analyzers.geometry import LineaDeConteo, lado_de
-from cvp.core import ANALYZERS, AnalyzerOutput, BBox, Event, Frame, Metric, Track
+from cvp.core import ANALYZERS, AnalyzerOutput, BBox, Detection, Event, Frame, Metric, Track
 from cvp.core.protocols import Analyzer
 from cvp.storage import agregar_por_minuto
 
@@ -91,7 +91,7 @@ def recorrer(
     alto: int = ALTO,
 ) -> list[AnalyzerOutput]:
     return [
-        analizador.process(fotograma(desde + i, ancho=ancho, alto=alto), tracks)
+        analizador.process(fotograma(desde + i, ancho=ancho, alto=alto), tracks, [])
         for i, tracks in enumerate(pasos)
     ]
 
@@ -401,9 +401,9 @@ def test_el_estado_de_un_track_que_lleva_mas_de_forget_after_frames_sin_verse_se
     a = analizador(forget_after_frames=60)
     recorrer(a, trayectoria([0.3, 0.3, 0.3]))  # indices 0, 1, 2: confirmado arriba
     assert a.tracks_recordados == 1
-    a.process(fotograma(62), [])  # 60 fotogramas sin verse: todavia se recuerda
+    a.process(fotograma(62), [], [])  # 60 fotogramas sin verse: todavia se recuerda
     assert a.tracks_recordados == 1
-    a.process(fotograma(63), [])  # 61: se olvida
+    a.process(fotograma(63), [], [])  # 61: se olvida
     assert a.tracks_recordados == 0
 
 
@@ -412,14 +412,14 @@ def test_un_track_olvidado_que_reaparece_al_otro_lado_no_cruza() -> None:
     verdad significa que al volver es un track nuevo: aparece ya al otro lado."""
     a = analizador(forget_after_frames=10)
     recorrer(a, trayectoria([0.3, 0.3]))
-    a.process(fotograma(50), [])
+    a.process(fotograma(50), [], [])
     salidas = recorrer(a, trayectoria([0.7, 0.7, 0.7]), desde=51)
     assert cruces(salidas) == []
 
     # Con un olvido mas largo, la misma secuencia si es un cruce: el track sigue recordado.
     b = analizador(forget_after_frames=100)
     recorrer(b, trayectoria([0.3, 0.3]))
-    b.process(fotograma(50), [])
+    b.process(fotograma(50), [], [])
     assert sentidos(recorrer(b, trayectoria([0.7, 0.7, 0.7]), desde=51)) == ["sur"]
 
 
@@ -431,7 +431,7 @@ def test_la_memoria_no_crece_con_los_vehiculos_que_ya_han_pasado() -> None:
     a = analizador(forget_after_frames=5)
     for i in range(200):
         # Cada fotograma trae un track nuevo, que no vuelve a verse.
-        a.process(fotograma(i), [track(960, 300, track_id=i)])
+        a.process(fotograma(i), [track(960, 300, track_id=i)], [])
     assert a.tracks_recordados <= 6
 
 
@@ -459,20 +459,35 @@ def test_cada_cruce_emite_su_evento_y_su_metrica_crossings_con_las_mismas_etique
 
 def test_cada_process_emite_vehicles_in_scene_con_el_numero_de_tracks() -> None:
     a = analizador()
-    con_tres = a.process(fotograma(0), [track(100, 100, track_id=i) for i in range(3)])
-    sin_nadie = a.process(fotograma(1), [])
+    con_tres = a.process(fotograma(0), [track(100, 100, track_id=i) for i in range(3)], [])
+    sin_nadie = a.process(fotograma(1), [], [])
     (m3,) = [m for m in con_tres.metrics if m.name == "vehicles_in_scene"]
     (m0,) = [m for m in sin_nadie.metrics if m.name == "vehicles_in_scene"]
     assert (m3.value, m0.value) == (3.0, 0.0)
     assert dict(m3.labels) == {}
 
 
+def test_las_detecciones_crudas_se_ignoran_solo_cuentan_los_tracks() -> None:
+    """Desde #11 `process` recibe tambien las detecciones. El trafico las ignora a
+    proposito: sin identidad se contaria el mismo coche una vez por fotograma."""
+    a = analizador()
+    cruzando = [BBox(940, y * ALTO - 40, 980, y * ALTO) for y in (0.3, 0.4, 0.6, 0.7)]
+    detecciones = [
+        [Detection(bbox=caja, class_id=2, label="car", confidence=0.9)] for caja in cruzando
+    ]
+    salidas = [a.process(fotograma(i), [], d) for i, d in enumerate(detecciones)]
+    assert cruces(salidas) == []
+    assert [m.value for s in salidas for m in s.metrics if m.name == "vehicles_in_scene"] == [
+        0.0
+    ] * 4
+
+
 def test_todos_los_timestamps_salen_de_frame_timestamp_nunca_del_reloj() -> None:
     marca = datetime(2001, 2, 3, 4, 5, 6, tzinfo=UTC)  # un instante que no es "ahora"
     a = analizador()
     recorrer(a, trayectoria([0.3, 0.3]))
-    salida = a.process(fotograma(2, timestamp=marca), [track(960, 0.7 * ALTO)])
-    salida2 = a.process(fotograma(3, timestamp=marca), [track(960, 0.7 * ALTO)])
+    salida = a.process(fotograma(2, timestamp=marca), [track(960, 0.7 * ALTO)], [])
+    salida2 = a.process(fotograma(3, timestamp=marca), [track(960, 0.7 * ALTO)], [])
     assert salida.metrics and salida2.events and salida2.metrics
     for cosa in (*salida.metrics, *salida2.events, *salida2.metrics):
         assert cosa.timestamp == marca
@@ -515,7 +530,7 @@ def test_el_docstring_avisa_de_que_label_no_sirve_para_desglosar_por_tipo() -> N
 
 
 def test_la_salida_es_un_analyzeroutput_con_tipos_del_core() -> None:
-    salida = analizador().process(fotograma(0), [track(960, 300)])
+    salida = analizador().process(fotograma(0), [track(960, 300)], [])
     assert isinstance(salida, AnalyzerOutput)
     assert all(isinstance(m, Metric) for m in salida.metrics)
     assert all(isinstance(e, Event) for e in salida.events)
@@ -585,7 +600,7 @@ def test_para_cada_cruce_el_track_fue_observado_a_ambos_lados_antes() -> None:
     lados: dict[int, set[int]] = {}
     pasos = trayectoria([0.3, 0.4, 0.6, 0.7], track_id=1) + trayectoria([0.6, 0.7], track_id=2)
     for i, tracks in enumerate(pasos):
-        salida = a.process(fotograma(i), tracks)
+        salida = a.process(fotograma(i), tracks, [])
         for e in salida.events:
             vistos = lados.get(int(e.attributes["track_id"]), set())
             assert vistos >= {-1, 1}, f"cruce sin haber visto los dos lados: {e}"
@@ -593,7 +608,7 @@ def test_para_cada_cruce_el_track_fue_observado_a_ambos_lados_antes() -> None:
             lados.setdefault(t.track_id, set()).add(
                 lado_de(linea.p1, linea.p2, t.bbox.bottom_center)
             )
-    assert len(cruces([a.process(fotograma(99), [])])) == 0
+    assert len(cruces([a.process(fotograma(99), [], [])])) == 0
 
 
 # --- Con video real ---------------------------------------------------------------------
@@ -639,8 +654,9 @@ def test_sobre_video_real_hay_cruces_y_cada_uno_fue_visto_a_ambos_lados_antes() 
         eventos: list[Event] = []
         fotogramas = 0
         for fotograma_real in origen.frames():
-            tracks = tracker.update(fotograma_real, detector.detect(fotograma_real))
-            salida = a.process(fotograma_real, tracks)
+            detecciones = detector.detect(fotograma_real)
+            tracks = tracker.update(fotograma_real, detecciones)
+            salida = a.process(fotograma_real, tracks, detecciones)
             fotogramas += 1
             for e in salida.events:
                 track_id = int(e.attributes["track_id"])

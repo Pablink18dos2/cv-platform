@@ -100,7 +100,9 @@ class AnalizadorFalso:
         self.name = "traffic_flow"
         self.every_n_frames = 1
 
-    def process(self, frame: Frame, tracks: list[Track]) -> AnalyzerOutput:
+    def process(
+        self, frame: Frame, tracks: list[Track], detections: list[Detection]
+    ) -> AnalyzerOutput:
         return AnalyzerOutput.empty()
 
     def annotate(self, image: np.ndarray, tracks: list[Track]) -> np.ndarray:
