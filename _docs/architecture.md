@@ -122,6 +122,33 @@ Un analizador **no sabe** de dónde vino el fotograma ni qué modelo lo detectó
 `Frame` y `list[Track]`. Por eso se puede testear con listas de tracks escritas a mano,
 sin vídeo, sin modelo y sin red.
 
+**Cómo se escribe uno.** `traffic_flow` (#10) es el molde, y lo que fija vale para los
+siguientes:
+
+- **La geometría se convierte a píxeles en el primer `process()`**, desde `frame.image.shape`,
+  no en la construcción: la fábrica construye los analizadores **antes** de abrir la fuente,
+  así que `from_config` no conoce la resolución. `cvp.analyzers.geometry.GeometriaPorFotograma`
+  lo hace por cualquier analizador, y reconvierte con un WARNING si la forma cambia a mitad
+  (una reconexión a otra calidad). Es lo que hace innecesario que el runner pase la resolución
+  y lo que permite probar con un `Frame` sintético de cualquier tamaño. Ojo: esta es la única
+  costura entre fracciones y píxeles que hay dentro de un analizador; el ROI del detector lo
+  sigue traduciendo el runner.
+- **Argumentos planos en el constructor y `from_config` como único puente con el YAML.** El
+  analizador se instancia en un test con tuplas (`LineaDeConteo`), sin Pydantic de por medio.
+- **El punto de referencia de un vehículo es `bbox.bottom_center`**, donde toca el suelo.
+- **El estado es por track y se olvida**: pasados `forget_after_frames` fotogramas de la fuente
+  sin verse, se suelta. Sin eso la memoria crece con cada vehículo que pasa, para siempre.
+- **Los cambios se confirman antes de emitirse**: un cruce es un cambio de lado que lleva
+  `min_frames_on_side` observaciones seguidas; en `parking_occupancy` la histéresis temporal
+  es la misma idea en segundos.
+- **Todos los timestamps salen de `frame.timestamp`**, y `analyzer` en cada evento y métrica es
+  el `name` del YAML, no el `type`: dos analizadores iguales en un proyecto se distinguen.
+- **`annotate` pinta sobre una copia** (`cvp.analyzers.drawing.copia_para_anotar`) y convierte
+  con la forma de la imagen que recibe, sin tocar el estado de `process`.
+- **Los tests van primero y son sintéticos**: un caso por fallo posible, con trayectorias de
+  `Track` escritas a mano; el vídeo real se queda en un único test `slow` que comprueba que lo
+  que sale no es un artefacto.
+
 ### 5. `Sink` — dónde acaba el resultado
 
 ```python

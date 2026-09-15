@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -569,3 +570,69 @@ def test_para_cada_cruce_el_track_fue_observado_a_ambos_lados_antes() -> None:
                 lado_de(linea.p1, linea.p2, t.bbox.bottom_center)
             )
     assert len(cruces([a.process(fotograma(99), [])])) == 0
+
+
+# --- Con video real ---------------------------------------------------------------------
+
+FIXTURE_1080P = Path(__file__).resolve().parents[1] / "fixtures" / "video" / "calle-1080p-6s.mp4"
+
+# Cruza la calzada del fixture a media altura, de la fila de aparcados de la izquierda a la
+# de la derecha. Escrita de izquierda a derecha, su lado positivo es el de abajo: el de los
+# vehiculos que se acercan a la camara.
+CALZADA = LineaDeConteo(
+    id="calzada",
+    p1=(0.25, 0.62),
+    p2=(0.62, 0.50),
+    positive_direction="acercandose",
+    negative_direction="alejandose",
+)
+
+
+@pytest.mark.slow
+def test_sobre_video_real_hay_cruces_y_cada_uno_fue_visto_a_ambos_lados_antes() -> None:
+    """Lo que distingue un cruce de un artefacto: para cada cruce, el `track_id` fue
+    observado a **ambos** lados de la linea en fotogramas anteriores, con la aritmetica
+    de `lado_de` por fuera del analizador.
+
+    `track_activation_threshold: 0.5` es lo que #7 midio que hace falta en esta escena:
+    con el 0,7 por defecto se siguen 5,4 de los ~14 vehiculos que el detector ve.
+    """
+    from cvp.detectors import YoloDetector
+    from cvp.sources import FileVideoSource
+    from cvp.trackers import ByteTrackTracker
+
+    detector = YoloDetector(
+        "yolo11n.pt", imgsz=640, conf=0.35, classes=["car", "motorcycle", "bus", "truck"]
+    )
+    tracker = ByteTrackTracker(frame_rate=5, track_activation_threshold=0.5)
+    a = TrafficFlowAnalyzer([CALZADA], name="trafico")
+    origen = FileVideoSource(FIXTURE_1080P, target_fps=5, start_time=INICIO)
+    origen.open()
+    try:
+        info = origen.info
+        linea = CALZADA.to_pixels(info.width, info.height)
+        lados_vistos: dict[int, set[int]] = {}
+        eventos: list[Event] = []
+        fotogramas = 0
+        for fotograma_real in origen.frames():
+            tracks = tracker.update(fotograma_real, detector.detect(fotograma_real))
+            salida = a.process(fotograma_real, tracks)
+            fotogramas += 1
+            for e in salida.events:
+                track_id = int(e.attributes["track_id"])
+                assert lados_vistos.get(track_id, set()) >= {-1, 1}, (
+                    f"cruce de {track_id} sin haberlo visto a los dos lados antes: {e}"
+                )
+                assert e.timestamp == fotograma_real.timestamp
+                eventos.append(e)
+            for t in tracks:
+                lados_vistos.setdefault(t.track_id, set()).add(
+                    lado_de(linea.p1, linea.p2, t.bbox.bottom_center)
+                )
+    finally:
+        origen.close()
+
+    assert fotogramas >= 25, "6 s a 5 fps deberian dar unos 30 fotogramas"
+    assert eventos, "en 6 s de esta calle tiene que cruzar la linea al menos un vehiculo"
+    assert {e.analyzer for e in eventos} == {"trafico"}
+    assert sum(a.contadores.values()) == len(eventos)
