@@ -17,13 +17,17 @@ Los colores son BGR, que es lo que entrega OpenCV y lo que el core no convierte.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import cv2
 import numpy as np
 
 __all__ = [
     "AMARILLO",
+    "AMBAR",
     "BLANCO",
     "CIAN",
+    "GRIS",
     "NEGRO",
     "ROJO",
     "VERDE",
@@ -31,6 +35,7 @@ __all__ = [
     "copia_para_anotar",
     "dibujar_etiqueta",
     "dibujar_linea",
+    "dibujar_poligono_relleno",
     "dibujar_punto",
 ]
 
@@ -38,8 +43,12 @@ Color = tuple[int, int, int]
 
 # BGR. Saturados a proposito: se ven sobre asfalto, sobre chapa y sobre un JPEG a 85.
 AMARILLO: Color = (0, 220, 255)
+# Ambar y gris son los dos estados intermedios de una plaza (#11): "esperando la
+# histeresis" y "todavia no se". El ambar se distingue del amarillo de las lineas a proposito.
+AMBAR: Color = (0, 150, 255)
 BLANCO: Color = (255, 255, 255)
 CIAN: Color = (255, 220, 0)
+GRIS: Color = (160, 160, 160)
 NEGRO: Color = (0, 0, 0)
 ROJO: Color = (60, 60, 255)
 VERDE: Color = (80, 230, 80)
@@ -65,6 +74,43 @@ def dibujar_linea(
     grosor: int = 3,
 ) -> None:
     cv2.line(imagen, _entero(p1), _entero(p2), color, grosor, lineType=cv2.LINE_AA)
+
+
+def dibujar_poligono_relleno(
+    imagen: np.ndarray,
+    puntos: Sequence[tuple[float, float]],
+    *,
+    color: Color,
+    opacidad: float = 0.35,
+    grosor_borde: int = 2,
+) -> None:
+    """Un poligono relleno semitransparente con borde opaco del mismo color.
+
+    Semitransparente para que el coche siga viendose debajo: una plaza pintada en rojo
+    solido tapa justo lo que hace falta mirar para saber si el rojo esta bien. La mezcla
+    se hace solo dentro del rectangulo envolvente del poligono, no sobre el fotograma
+    entero, para que veinte plazas no cuesten veinte copias de 6 MB.
+    """
+    if not 0.0 <= opacidad <= 1.0:
+        raise ValueError(f"opacidad es una fraccion 0-1, no {opacidad!r}")
+    enteros = np.array([_entero(p) for p in puntos], dtype=np.int32)
+    alto, ancho = imagen.shape[:2]
+    x1, y1 = max(0, int(enteros[:, 0].min())), max(0, int(enteros[:, 1].min()))
+    x2, y2 = min(ancho, int(enteros[:, 0].max()) + 1), min(alto, int(enteros[:, 1].max()) + 1)
+    if x2 > x1 and y2 > y1 and opacidad > 0.0:
+        recorte = imagen[y1:y2, x1:x2]
+        capa = recorte.copy()
+        cv2.fillPoly(capa, [enteros - np.array([x1, y1], dtype=np.int32)], color)
+        cv2.addWeighted(capa, opacidad, recorte, 1.0 - opacidad, 0.0, dst=recorte)
+    if grosor_borde > 0:
+        cv2.polylines(
+            imagen,
+            [enteros],
+            isClosed=True,
+            color=color,
+            thickness=grosor_borde,
+            lineType=cv2.LINE_AA,
+        )
 
 
 def dibujar_punto(

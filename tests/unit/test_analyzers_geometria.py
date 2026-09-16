@@ -1,9 +1,9 @@
-"""La geometria compartida de los analizadores: el lado de un punto y la conversion a
-pixeles desde el primer fotograma.
+"""La geometria compartida de los analizadores: el lado de un punto, los poligonos y su
+IoU con una caja, y la conversion a pixeles desde el primer fotograma.
 
 Todo con numeros escritos a mano. Es lo que fija que el lado `+1` es el que queda a la
-derecha de `p1 -> p2` visto en pantalla, y que un punto sobre la linea es `0` y no un
-redondeo hacia ningun lado.
+derecha de `p1 -> p2` visto en pantalla, que un punto sobre la linea es `0` y no un
+redondeo hacia ningun lado, y que el IoU de una caja identica a la plaza es exactamente 1.
 """
 
 from __future__ import annotations
@@ -18,9 +18,13 @@ from cvp.analyzers.geometry import (
     GeometriaPorFotograma,
     LineaDeConteo,
     LineaEnPixeles,
+    MascaraDePoligono,
+    Poligono,
+    PoligonoEnPixeles,
     lado_de,
+    rasterizar_poligono,
 )
-from cvp.core import Frame
+from cvp.core import BBox, Frame
 
 INICIO = datetime(2026, 9, 13, 10, 0, tzinfo=UTC)
 
@@ -134,6 +138,124 @@ def test_una_linea_de_conteo_mal_escrita_falla_al_construirla(cambios: dict[str,
 def test_convertir_sin_dimensiones_falla(ancho: int, alto: int) -> None:
     with pytest.raises(ValueError, match="pixeles"):
         linea().to_pixels(ancho, alto)
+
+
+# --- Poligono: la plaza en fracciones, y en pixeles ----------------------------------------
+
+
+def cuadrado(x1: float, y1: float, x2: float, y2: float, *, id: str = "d01") -> Poligono:
+    return Poligono(id=id, puntos=((x1, y1), (x2, y1), (x2, y2), (x1, y2)))
+
+
+def test_un_poligono_se_convierte_a_pixeles_sin_redondear_y_conserva_el_id() -> None:
+    en_pixeles = cuadrado(0.1, 0.25, 0.9, 0.75).to_pixels(1281, 721)
+    assert isinstance(en_pixeles, PoligonoEnPixeles)
+    assert en_pixeles.id == "d01"
+    assert en_pixeles.puntos[0] == pytest.approx((128.1, 180.25))
+    assert en_pixeles.puntos[2] == pytest.approx((1152.9, 540.75))
+    assert en_pixeles.centroide == pytest.approx((640.5, 360.5))
+    assert en_pixeles.rectangulo_envolvente == pytest.approx((128.1, 180.25, 1152.9, 540.75))
+
+
+def test_un_poligono_acepta_listas_y_las_guarda_como_tuplas_de_float() -> None:
+    """Es lo que llega de `zones.json`: listas de listas, con enteros donde el JSON los
+    escriba (`[0, 1]`)."""
+    p = Poligono(id="z", puntos=[[0, 0], [1, 0], [1, 1]])  # type: ignore[arg-type]
+    assert p.puntos == ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0))
+
+
+@pytest.mark.parametrize(
+    ("cambios", "mensaje"),
+    [
+        ({"id": " "}, "necesita id"),
+        ({"puntos": ((0.1, 0.1), (0.5, 0.5))}, "al menos 3 puntos y tiene 2"),
+        ({"puntos": ((0.1, 0.1), (1.2, 0.1), (0.5, 0.5))}, "punto 1 de la zona 'd01'"),
+        ({"puntos": ((0.1, 0.1), (0.5, 0.5), (0.9, 0.9))}, "area cero"),
+    ],
+    ids=["sin-id", "dos-puntos", "fuera-de-0-1", "colineal"],
+)
+def test_un_poligono_mal_escrito_falla_al_construirlo_diciendo_que(
+    cambios: dict[str, object], mensaje: str
+) -> None:
+    campos: dict[str, object] = {"id": "d01", "puntos": ((0.1, 0.1), (0.5, 0.1), (0.5, 0.5))}
+    with pytest.raises(ValueError, match=mensaje):
+        Poligono(**(campos | cambios))  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(("ancho", "alto"), [(0, 100), (100, 0)])
+def test_convertir_un_poligono_sin_dimensiones_falla(ancho: int, alto: int) -> None:
+    with pytest.raises(ValueError, match="pixeles"):
+        cuadrado(0.1, 0.1, 0.5, 0.5).to_pixels(ancho, alto)
+
+
+# --- Rasterizar y medir el IoU con una caja -------------------------------------------------
+
+
+def test_un_rectangulo_rasterizado_ocupa_los_pixeles_de_sus_vertices_incluidos() -> None:
+    """El convenio de `fillPoly`: un vertice entero cae dentro, asi que de (10, 10) a
+    (20, 30) son 11 x 21 pixeles. Es lo que `iou_con` da por hecho para la caja."""
+    mascara = rasterizar_poligono(cuadrado(0.1, 0.1, 0.2, 0.3).to_pixels(100, 100), 100, 100)
+    assert isinstance(mascara, MascaraDePoligono)
+    assert (mascara.x1, mascara.y1, mascara.x2, mascara.y2) == (10, 10, 21, 31)
+    assert mascara.area == 11 * 21
+    assert mascara.mascara.dtype == bool and mascara.mascara.all()
+
+
+def test_la_mascara_va_recortada_al_rectangulo_envolvente_y_no_al_fotograma() -> None:
+    triangulo = Poligono(id="t", puntos=((0.5, 0.5), (0.6, 0.5), (0.5, 0.6))).to_pixels(1000, 1000)
+    mascara = rasterizar_poligono(triangulo, 1000, 1000)
+    assert mascara.mascara.shape == (101, 101)
+    # La mitad de un cuadrado de 101 x 101, mas o menos la diagonal.
+    assert 101 * 101 / 2 <= mascara.area <= 101 * 101 / 2 + 101
+    assert not mascara.mascara[100, 100], "la esquina opuesta a la hipotenusa esta fuera"
+    assert mascara.mascara[0, 0]
+
+
+def test_un_poligono_que_se_sale_del_fotograma_se_recorta_y_uno_de_fuera_queda_vacio() -> None:
+    recortado = rasterizar_poligono(cuadrado(0.9, 0.9, 1.0, 1.0).to_pixels(100, 100), 100, 100)
+    assert (recortado.x2, recortado.y2) == (100, 100)
+    assert recortado.area == 10 * 10
+    fuera = rasterizar_poligono(
+        PoligonoEnPixeles(id="f", puntos=((200.0, 200.0), (300.0, 200.0), (300.0, 300.0))), 100, 100
+    )
+    assert fuera.area == 0
+    assert fuera.iou_con(BBox(200, 200, 300, 300)) == 0.0
+
+
+def test_una_caja_identica_a_la_plaza_da_iou_exactamente_1() -> None:
+    mascara = rasterizar_poligono(cuadrado(0.1, 0.1, 0.2, 0.3).to_pixels(100, 100), 100, 100)
+    assert mascara.iou_con(BBox(10, 10, 20, 30)) == 1.0
+
+
+def test_el_iou_es_interseccion_partido_por_union_en_pixeles() -> None:
+    """Numeros a mano: plaza de 11 x 21 = 231 pixeles; caja de (10, 10) a (20, 20), o sea
+    11 x 11 = 121, toda dentro. IoU = 121 / 231."""
+    mascara = rasterizar_poligono(cuadrado(0.1, 0.1, 0.2, 0.3).to_pixels(100, 100), 100, 100)
+    assert mascara.iou_con(BBox(10, 10, 20, 20)) == pytest.approx(121 / 231)
+    # Una caja que la desborda por los cuatro lados: 21 x 31 = 651, y la interseccion es
+    # la plaza entera. IoU = 231 / 651.
+    assert mascara.iou_con(BBox(5, 5, 25, 35)) == pytest.approx(231 / 651)
+    # Una que solo la toca por una esquina: 1 pixel de interseccion.
+    assert mascara.iou_con(BBox(20, 30, 40, 50)) == pytest.approx(1 / (231 + 21 * 21 - 1))
+
+
+def test_una_caja_que_no_toca_la_plaza_da_iou_cero() -> None:
+    mascara = rasterizar_poligono(cuadrado(0.1, 0.1, 0.2, 0.3).to_pixels(100, 100), 100, 100)
+    assert mascara.iou_con(BBox(50, 50, 60, 60)) == 0.0
+    assert mascara.iou_con(BBox(21, 10, 30, 30)) == 0.0, "pegada por la derecha, sin solapar"
+
+
+def test_el_iou_con_un_poligono_no_rectangular_cuenta_solo_lo_de_dentro() -> None:
+    """Un rombo inscrito en un cuadrado ocupa la mitad del cuadrado, asi que la caja que
+    lo envuelve tiene IoU ~0,5 con el, no 1,0: es lo que distingue un IoU de verdad de
+    un "la caja toca el poligono"."""
+    rombo = Poligono(id="r", puntos=((0.5, 0.0), (1.0, 0.5), (0.5, 1.0), (0.0, 0.5)))
+    mascara = rasterizar_poligono(rombo.to_pixels(100, 100), 101, 101)
+    assert mascara.area == pytest.approx(101 * 101 / 2, rel=0.03)
+    assert mascara.iou_con(BBox(0, 0, 100, 100)) == pytest.approx(0.5, abs=0.02)
+    # La mitad superior de la caja (101 x 51 pixeles) contiene la mitad del rombo:
+    # IoU = (A/2) / (101 * 51 + A/2) con A ~ 5100, o sea ~1/3.
+    assert mascara.iou_con(BBox(0, 0, 100, 50)) == pytest.approx(1 / 3, abs=0.02)
 
 
 # --- GeometriaPorFotograma: desde el primer fotograma, no en la construccion -----------

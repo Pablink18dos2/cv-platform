@@ -9,17 +9,58 @@ etiqueta pegada al borde no se pierde fuera de la imagen.
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from cvp.analyzers.drawing import (
+    ROJO,
+    VERDE,
     copia_para_anotar,
     dibujar_etiqueta,
     dibujar_linea,
+    dibujar_poligono_relleno,
     dibujar_punto,
 )
 
 
 def lienzo() -> np.ndarray:
     return np.zeros((120, 200, 3), dtype=np.uint8)
+
+
+# --- Poligonos rellenos: semitransparentes, con borde, y solo dentro de su rectangulo ----
+
+CUADRADO = [(20.0, 20.0), (80.0, 20.0), (80.0, 80.0), (20.0, 80.0)]
+
+
+def test_el_relleno_es_semitransparente_y_deja_ver_lo_de_debajo() -> None:
+    imagen = np.full((120, 200, 3), 200, dtype=np.uint8)  # un fondo gris claro
+    dibujar_poligono_relleno(imagen, CUADRADO, color=ROJO, opacidad=0.5, grosor_borde=0)
+    dentro = imagen[50, 50]
+    # Mezcla al 50 %: (200 + 60) / 2 en B y G, (200 + 255) / 2 en R. Ni el fondo ni el
+    # color puro: se ve el coche y se ve el rojo.
+    assert tuple(int(c) for c in dentro) == pytest.approx((130, 130, 227), abs=2)
+    assert tuple(imagen[10, 10]) == (200, 200, 200), "fuera del poligono no se toca nada"
+    assert tuple(imagen[110, 190]) == (200, 200, 200)
+
+
+def test_el_borde_es_opaco_y_del_mismo_color() -> None:
+    imagen = lienzo()
+    dibujar_poligono_relleno(imagen, CUADRADO, color=VERDE, opacidad=0.0, grosor_borde=2)
+    assert imagen[20, 50].any(), "el borde superior pasa por (50, 20)"
+    assert not imagen[50, 50].any(), "con opacidad 0 el interior queda como estaba"
+    assert imagen[20, 50][1] >= imagen[20, 50][0], "es verde: el canal G domina"
+
+
+def test_un_poligono_que_se_sale_del_fotograma_se_recorta_sin_reventar() -> None:
+    imagen = lienzo()
+    fuera = [(150.0, 100.0), (260.0, 100.0), (260.0, 160.0), (150.0, 160.0)]
+    dibujar_poligono_relleno(imagen, fuera, color=ROJO)
+    assert imagen[110, 190].any()
+    assert not imagen[50, 50].any()
+
+
+def test_una_opacidad_fuera_de_0_1_es_un_error() -> None:
+    with pytest.raises(ValueError, match="opacidad"):
+        dibujar_poligono_relleno(lienzo(), CUADRADO, color=ROJO, opacidad=1.5)
 
 
 def test_la_copia_es_un_array_nuevo_contiguo_e_igual_al_original() -> None:
