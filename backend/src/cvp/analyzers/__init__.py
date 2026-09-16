@@ -5,18 +5,21 @@ lo que permite que un `type: traffic_flow` del YAML se resuelva a una clase.
 
 Lo que comparten todos, y que un analizador nuevo debe reutilizar en vez de copiar:
 
-- `cvp.analyzers.geometry` — de fracciones a pixeles desde el primer fotograma, y el lado
-  de un punto respecto a una linea.
+- `cvp.analyzers.geometry` — de fracciones a pixeles desde el primer fotograma, el lado
+  de un punto respecto a una linea, y los poligonos con su IoU contra una caja.
 - `cvp.analyzers.drawing` — las primitivas de `annotate`, que nunca pintan sobre el array
   que reciben.
 
 Y el molde: `cvp.analyzers.traffic` (#10). Argumentos planos en el constructor,
 `from_config` como unico puente con el YAML, estado por track que se olvida, timestamps de
 `frame.timestamp`, y tests con trayectorias sinteticas antes que con video.
+`cvp.analyzers.parking` (#11) lo sigue, con la histeresis en segundos de video en vez de
+la confirmacion en fotogramas.
 """
 
 from __future__ import annotations
 
+from cvp.analyzers.parking import ParkingOccupancyAnalyzer
 from cvp.analyzers.traffic import TrafficFlowAnalyzer
 
-__all__ = ["TrafficFlowAnalyzer"]
+__all__ = ["ParkingOccupancyAnalyzer", "TrafficFlowAnalyzer"]

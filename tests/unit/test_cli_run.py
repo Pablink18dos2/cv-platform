@@ -200,15 +200,35 @@ def test_un_fallo_de_ejecucion_sale_con_dos(
 
 @pytest.mark.slow
 def test_run_acepta_el_directorio_y_rechaza_un_type_sin_implementacion(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Importa los paquetes de implementacion de verdad, y por eso va marcado `slow`.
 
     No carga ningun modelo ni abre ninguna fuente: el runner resuelve **los cinco nombres
-    antes de construir nada**, y `parking_occupancy` todavia no tiene implementacion (#11;
-    hasta #10 el ejemplo era `traffic_flow`). Es el hueco entre `CONFIG_SCHEMAS` y los
-    registros, visto desde el CLI.
+    antes de construir nada**. Es el hueco entre `CONFIG_SCHEMAS` y los registros, visto
+    desde el CLI. Desde #11 los dos analizadores del MVP tienen implementacion y el hueco
+    ya no existe de verdad, asi que se reproduce: el registro de analizadores que ve la
+    fabrica es uno con `traffic_flow` y sin `parking_occupancy` (hasta #10 el ejemplo era
+    `traffic_flow`, y hasta #11, `parking_occupancy`).
     """
+    from cvp.analyzers import TrafficFlowAnalyzer
+    from cvp.core import DETECTORS, SINKS, SOURCES, TRACKERS
+    from cvp.core.registry import Registry
+    from cvp.pipeline import factory
+
+    solo_trafico: Registry[Any] = Registry("analyzer")
+    solo_trafico.register("traffic_flow")(TrafficFlowAnalyzer)
+    monkeypatch.setattr(
+        factory,
+        "REGISTROS",
+        {
+            "source": SOURCES,
+            "detector": DETECTORS,
+            "tracker": TRACKERS,
+            "analyzers": solo_trafico,
+            "sinks": SINKS,
+        },
+    )
     directorio = proyecto(
         tmp_path,
         source={"type": "file", "path": str(VIDEO), "target_fps": 5},
