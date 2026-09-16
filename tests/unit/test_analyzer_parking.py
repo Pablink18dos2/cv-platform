@@ -607,8 +607,32 @@ def test_otras_formas_de_romper_zones_json_tambien_fallan_con_su_campo(
 
 
 def test_un_zones_json_que_no_existe_falla_diciendo_la_ruta(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="no se puede leer"):
-        cargar_zonas(tmp_path / "no-existe.json")
+    ruta = tmp_path / "no-existe.json"
+    with pytest.raises(ValueError, match="no se puede leer") as excinfo:
+        cargar_zonas(ruta)
+    assert str(ruta) in str(excinfo.value)
+
+
+def test_un_zones_json_en_utf8_con_bom_carga_igual(tmp_path: Path) -> None:
+    """El BOM es lo que escriben `Set-Content -Encoding utf8` en PowerShell 5.1 y el Bloc
+    de notas; `json.loads` a secas lo rechaza con "Unexpected UTF-8 BOM"."""
+    ruta = tmp_path / "zones.json"
+    ruta.write_bytes(b"\xef\xbb\xbf" + (FIXTURES / "valido.json").read_bytes())
+    assert [z.id for z in cargar_zonas(ruta)] == ["d01", "d02", "d03"]
+
+
+def test_un_zones_json_en_utf16_falla_diciendo_la_ruta_y_la_codificacion(tmp_path: Path) -> None:
+    """Es lo que escribe `Out-File` en PowerShell 5.1 por defecto, o sea lo que va a pasar.
+    `UnicodeDecodeError` no es `OSError`, y sin tratarlo el mensaje salia sin la ruta."""
+    ruta = tmp_path / "zones.json"
+    ruta.write_text(
+        '{"zones": [{"id": "d01", "polygon": [[0, 0], [1, 0], [1, 1]]}]}', encoding="utf-16"
+    )
+    with pytest.raises(ValueError) as excinfo:
+        cargar_zonas(ruta)
+    mensaje = str(excinfo.value)
+    assert str(ruta) in mensaje
+    assert "UTF-8" in mensaje
 
 
 # --- Lo que sale -----------------------------------------------------------------------------

@@ -185,9 +185,16 @@ def cargar_zonas(ruta: Path | str) -> tuple[Poligono, ...]:
     """
     ruta = Path(ruta)
     try:
-        texto = ruta.read_text(encoding="utf-8")
+        # `utf-8-sig`: UTF-8 con o sin BOM. El BOM es lo que escriben `Set-Content
+        # -Encoding utf8` y el Bloc de notas en Windows, y `json.loads` lo rechaza.
+        texto = ruta.read_text(encoding="utf-8-sig")
     except OSError as exc:
         raise ValueError(f"{ruta}: no se puede leer el fichero de zonas: {exc}") from exc
+    except UnicodeDecodeError as exc:
+        # No es un `OSError`: el fichero se lee y no esta en UTF-8. Es lo que escribe
+        # `Out-File` en PowerShell 5.1 por defecto (UTF-16), y sin la ruta en el mensaje
+        # no se sabe que fichero es.
+        raise ValueError(f"{ruta}: el fichero de zonas no esta en UTF-8: {exc}") from exc
     try:
         datos = json.loads(texto)
     except json.JSONDecodeError as exc:

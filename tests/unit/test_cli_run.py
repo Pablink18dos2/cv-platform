@@ -17,7 +17,7 @@ import pytest
 import yaml
 
 from cvp.cli import NIVEL_POR_DEFECTO, build_parser, main, nivel_por_defecto
-from cvp.pipeline import AbortRequested, PipelineError
+from cvp.pipeline import AbortRequested, ConfigError, PipelineError
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "config"
 ROTO = FIXTURES / "roto-tres-errores.yaml"
@@ -195,6 +195,24 @@ def test_un_fallo_de_ejecucion_sale_con_dos(
     assert "la fuente no abre" in capsys.readouterr().err
 
 
+def test_un_configerror_al_construir_los_bloques_sale_con_uno_y_sin_traceback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Un `zones.json` roto (#11) se descubre al construir el analizador, despues de que el
+    YAML haya validado. Sigue siendo un error de configuracion: mismo codigo y misma forma
+    que un YAML roto, no un traceback con 2."""
+    _sustituir_run_project(
+        monkeypatch,
+        ConfigError("project.yaml", ["analyzers[0]: zones.json: 'zones' esta vacia"]),
+    )
+    assert main(["run", str(proyecto(tmp_path))]) == 1
+    salida = capsys.readouterr()
+    assert salida.err.startswith("project.yaml: 1 error de configuración")
+    assert "analyzers[0]: zones.json: 'zones' esta vacia" in salida.err
+    assert "Traceback" not in salida.err
+    assert salida.out == ""
+
+
 # --- El directorio del proyecto y el `type:` sin implementacion -----------------------
 
 
@@ -241,3 +259,50 @@ def test_run_acepta_el_directorio_y_rechaza_un_type_sin_implementacion(
     assert "no hay ningun analyzer llamado 'parking_occupancy'" in salida.err
     assert "Disponibles: traffic_flow" in salida.err
     assert "Traceback" not in salida.err
+
+
+@pytest.mark.slow
+def test_run_con_un_zones_json_roto_falla_limpio_con_uno_como_un_yaml_roto(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Lo que QA midio en #11: un `zones.json` roto daba traceback y codigo 2. Es un error
+    de configuracion —se arregla editando el fichero— y tiene que sonar como un YAML roto:
+    la ruta del proyecto, el campo, el motivo con la ruta del `zones.json`, codigo 1 y sin
+    traceback. Registros de verdad (por eso `slow`) con dobles para los bloques que no se
+    estan probando: el fallo llega en `from_config`, antes de abrir nada ni cargar pesos."""
+    from cvp.core import ANALYZERS
+    from cvp.core.registry import Registry
+    from cvp.pipeline import factory
+
+    class Bloque:
+        @classmethod
+        def from_config(cls, cfg: Any, **_: Any) -> Bloque:
+            return cls()
+
+    registros: dict[str, Registry[Any]] = {
+        "source": Registry("source"),
+        "detector": Registry("detector"),
+        "tracker": Registry("tracker"),
+        "analyzers": ANALYZERS,
+        "sinks": Registry("sink"),
+    }
+    registros["source"].register("file")(Bloque)
+    registros["detector"].register("yolo")(Bloque)
+    registros["tracker"].register("bytetrack")(Bloque)
+    registros["sinks"].register("sqlite")(Bloque)
+    monkeypatch.setattr(factory, "REGISTROS", registros)
+
+    directorio = proyecto(
+        tmp_path,
+        source={"type": "file", "path": str(VIDEO), "target_fps": 5},
+        analyzers=[{"type": "parking_occupancy", "zones_file": "zones.json"}],
+    )
+    zonas = directorio / "zones.json"
+    zonas.write_text('{"zones": []}', encoding="utf-8")
+
+    assert main(["run", str(directorio), "--max-frames", "1"]) == 1
+    salida = capsys.readouterr()
+    assert salida.err.startswith(f"{directorio / 'project.yaml'}: 1 error de configuración")
+    assert f"analyzers[0]: {zonas}: 'zones' esta vacia" in salida.err
+    assert "Traceback" not in salida.err
+    assert salida.out == ""

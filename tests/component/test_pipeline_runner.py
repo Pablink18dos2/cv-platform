@@ -36,7 +36,13 @@ from cvp.core import (
     UnknownTypeError,
 )
 from cvp.core.registry import Registry
-from cvp.pipeline import AbortRequested, PipelineError, ProjectConfig, load_project_config
+from cvp.pipeline import (
+    AbortRequested,
+    ConfigError,
+    PipelineError,
+    ProjectConfig,
+    load_project_config,
+)
 from cvp.pipeline.config import Reconnect
 from cvp.pipeline.factory import build_pipeline
 from cvp.pipeline.runner import PipelineRunner, manejar_sigint, run_project
@@ -484,6 +490,38 @@ def test_una_clase_registrada_sin_from_config_lo_dice_por_su_nombre(tmp_path: Pa
     config = configuracion(tmp_path)
     with pytest.raises(PipelineError, match="from_config"):
         build_pipeline(config, registries=registros(sink=SinFabrica))
+
+
+def test_un_from_config_que_rechaza_su_configuracion_es_un_configerror_con_el_campo(
+    tmp_path: Path,
+) -> None:
+    """Lo que el esquema no puede comprobar lo comprueba el bloque al construirse: el
+    contenido de `zones.json` (#11) lo valida `ParkingOccupancyAnalyzer.from_config`. Un
+    `ValueError` de ahi es un error de **configuracion** —se arregla editando un fichero—
+    y tiene que salir con la misma forma que uno del YAML: la ruta del `project.yaml`, el
+    campo (`analyzers[0]`) y el motivo, para que el CLI lo trate igual (sin traceback,
+    codigo 1). Un `PipelineError` sigue siendo de ejecucion y no se toca."""
+
+    class AnalizadorQueRechaza(FakeAnalyzer):
+        @classmethod
+        def from_config(cls, cfg: Any) -> FakeAnalyzer:
+            raise ValueError("zones.json: 'zones' esta vacia: sin plazas no hay nada que medir")
+
+    config = configuracion(tmp_path)
+    with pytest.raises(ConfigError) as error:
+        build_pipeline(config, registries=registros(analyzer=AnalizadorQueRechaza))
+    assert str(error.value).startswith(f"{config.config_path}: 1 error de configuración")
+    assert error.value.problems == (
+        "analyzers[0]: zones.json: 'zones' esta vacia: sin plazas no hay nada que medir",
+    )
+
+    class SinkQueNoArranca(FakeSink):
+        @classmethod
+        def from_config(cls, cfg: Any, **_: Any) -> FakeSink:
+            raise PipelineError("la base de datos no responde")
+
+    with pytest.raises(PipelineError, match="no responde"):
+        build_pipeline(config, registries=registros(sink=SinkQueNoArranca))
 
 
 def test_un_proyecto_sin_analizadores_ni_sinks_arranca_y_avisa(

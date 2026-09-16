@@ -172,6 +172,12 @@ def _run(
         # configuracion y sale sin traceback, igual que `validate`.
         print(f"{path}: {exc}", file=sys.stderr)
         return 1
+    except ConfigError as exc:
+        # Lo que el esquema no puede comprobar y el bloque si al construirse: el contenido
+        # de `zones.json` (#11). La fabrica ya lo trae con la ruta del YAML y el campo, y
+        # se arregla editando un fichero, asi que suena igual que un YAML roto.
+        print(exc, file=sys.stderr)
+        return 1
     except PipelineError as exc:
         print(f"{path}: {exc}", file=sys.stderr)
         return 2

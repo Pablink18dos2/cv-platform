@@ -33,7 +33,7 @@ from typing import Any, NamedTuple
 from cvp.core import ANALYZERS, DETECTORS, SINKS, SOURCES, TRACKERS, UnknownTypeError
 from cvp.core.registry import Registry
 from cvp.pipeline.config import ProjectConfig
-from cvp.pipeline.errors import PipelineError
+from cvp.pipeline.errors import ConfigError, PipelineError
 
 __all__ = [
     "PAQUETES_DE_IMPLEMENTACION",
@@ -130,16 +130,21 @@ def build_pipeline(
         for i, cfg in enumerate(config.sinks)
     ]
 
-    source = _construir(clase_fuente, config.source, "source")
-    detector = _construir(clase_detector, config.detector, "detector")
+    fuente = str(config.config_path)
+    source = _construir(clase_fuente, config.source, "source", fuente=fuente)
+    detector = _construir(clase_detector, config.detector, "detector", fuente=fuente)
     # `frame_rate` es la tasa a la que el tracker ve fotogramas, o sea `source.target_fps`:
     # escribirlo tambien en el bloque `tracker` seria una forma segura de que los dos
     # acabaran discrepando (decision de #3 y #7).
     tracker = _construir(
-        clase_tracker, config.tracker, "tracker", frame_rate=config.source.target_fps
+        clase_tracker,
+        config.tracker,
+        "tracker",
+        fuente=fuente,
+        frame_rate=config.source.target_fps,
     )
     analyzers = tuple(
-        _construir(clase, cfg, f"analyzers[{i}]")
+        _construir(clase, cfg, f"analyzers[{i}]", fuente=fuente)
         for i, (clase, cfg) in enumerate(zip(clases_analizadores, config.analyzers, strict=True))
     )
     # El otro argumento que no sale del bloque: **un sink tiene que saber a que proyecto
@@ -149,7 +154,14 @@ def build_pipeline(
     # —`jsonl`— lo aceptan y lo descartan: un parametro que alguna implementacion ignora
     # cuesta mucho menos que un caso especial aqui dentro.
     sinks = tuple(
-        _construir(clase, cfg, f"sinks[{i}]", project_id=config.id, project_name=config.name)
+        _construir(
+            clase,
+            cfg,
+            f"sinks[{i}]",
+            fuente=fuente,
+            project_id=config.id,
+            project_name=config.name,
+        )
         for i, (clase, cfg) in enumerate(zip(clases_sinks, config.sinks, strict=True))
     )
 
@@ -186,12 +198,20 @@ def _resolver(
         raise UnknownTypeError(f"{campo}.type: {exc}") from exc
 
 
-def _construir(clase: type[Any], cfg: Any, campo: str, **extras: Any) -> Any:
+def _construir(clase: type[Any], cfg: Any, campo: str, *, fuente: str, **extras: Any) -> Any:
     """Construye un bloque con su propio `from_config`.
 
     `from_config` no esta en el `Protocol` —los protocolos describen como se **usa** un
     bloque, no como se fabrica— pero es la convencion de todos los adaptadores. Si falta,
     el error dice que clase es y que le falta, en vez de un `AttributeError` pelado.
+
+    **Un `ValueError` de `from_config` es un error de configuracion**, y sale como
+    `ConfigError` con la ruta del `project.yaml` (`fuente`) y el campo. Es lo que el esquema
+    no puede comprobar y el bloque si: el contenido de `zones.json` (#11) lo valida
+    `ParkingOccupancyAnalyzer.from_config`, y un fichero de zonas roto se arregla editando
+    un fichero, igual que un YAML roto, asi que tiene que sonar igual en el CLI (codigo 1,
+    sin traceback) y no como un fallo del programa. Un `PipelineError` —la clase no sabe
+    construirse, la base de datos no responde— sigue siendo de ejecucion y pasa tal cual.
     """
     fabrica = getattr(clase, "from_config", None)
     if not callable(fabrica):
@@ -199,4 +219,9 @@ def _construir(clase: type[Any], cfg: Any, campo: str, **extras: Any) -> Any:
             f"{campo}: {clase.__module__}.{clase.__qualname__} no tiene from_config(cfg), "
             "que es como la capa de configuracion construye un bloque"
         )
-    return fabrica(cfg, **extras)
+    try:
+        return fabrica(cfg, **extras)
+    except ConfigError:
+        raise
+    except ValueError as exc:
+        raise ConfigError(fuente, [f"{campo}: {exc}"]) from exc
