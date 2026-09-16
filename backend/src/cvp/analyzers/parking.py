@@ -29,13 +29,20 @@ lo forman estan argumentadas en #11 y van aqui arriba:
    por delante durante `to_occupied_s - 1` no ocupe nada. Los dos umbrales son asimetricos
    a proposito: liberar una plaza que sigue ocupada es peor error que tardar en marcarla.
 
-Y una cuarta, mas pequena, sobre el arranque: **el primer estado de cada plaza no se
-asume**. Al arrancar el worker, una plaza ya ocupada no puede generar un `space_occupied`
-falso ni contarse como libre mientras tanto, asi que empieza en `Ocupacion.DESCONOCIDA`
-("todavia no se"), no cuenta ni como libre ni como ocupada, no emite `zone_occupied`, y se
-determina —sin evento— tras `to_occupied_s` seguidos de la misma observacion, sea cual sea.
-`to_free_s` protege una plaza que **se dio** por ocupada; al arrancar no hay nada que
-proteger y esperar 10 s en vez de 6 solo retrasaria el dato.
+Y una cuarta, sobre el arranque: **la primera observacion de cada plaza es su estado
+inicial, sin evento, y desde ahi se aplica la misma histeresis que en regimen.** Al arrancar
+el worker, una plaza ya ocupada cuenta como ocupada desde el primer fotograma y no genera
+un `space_occupied` por ello; si un autobus la tapa en los segundos siguientes, `to_free_s`
+la protege igual que en regimen; y una deteccion que parpadea se absorbe igual. La primera
+version tenia un estado "todavia no se" que esperaba `to_occupied_s` antes de decidir, y QA
+midio que era **peor** que el regimen: sin proteccion del autobus durante el arranque, una
+deteccion que parpadeaba no salia nunca del limbo, y los ceros que no se emitian por plaza
+si entraban en `spaces_occupied`, asi que la global y la suma de plazas discrepaban en
+SQLite. El criterio se corrigio el 2026-09-16 y desde entonces hay un invariante: en cada
+`process()`, `spaces_free + spaces_occupied == spaces_total` y `spaces_occupied` es la suma
+de los `zone_occupied` de ese mismo `process()`. El unico "todavia no se" que queda es antes
+del primer fotograma (`estado_de` devuelve `None`, `annotate` pinta gris), y ahi no se emite
+ninguna metrica.
 
 Todos los timestamps salen de `frame.timestamp`. Aqui no hay reloj.
 """
@@ -95,10 +102,10 @@ TO_FREE_S_POR_DEFECTO = 10.0
 
 
 class Ocupacion(Enum):
-    """El estado **confirmado** de una plaza. `DESCONOCIDA` es "todavia no se": el estado
-    con el que arranca cada plaza y del que sale, sin evento, tras `to_occupied_s`."""
+    """El estado **confirmado** de una plaza: lo que cuentan las metricas y lo que un
+    evento dice que ha cambiado. No hay un tercer valor: antes del primer fotograma una
+    plaza no tiene estado (`None`), y desde el primero tiene uno de estos dos."""
 
-    DESCONOCIDA = "desconocida"
     LIBRE = "libre"
     OCUPADA = "ocupada"
 
@@ -107,22 +114,21 @@ class Ocupacion(Enum):
 class _EstadoDePlaza:
     """El estado de **una** plaza, con la histeresis a medias.
 
-    `confirmado` es lo que se da por bueno y lo que cuentan las metricas. `candidato` es
-    lo que se esta observando ultimamente (`True` = con coche) y `desde` el timestamp del
-    primer fotograma de esa racha: la cuenta de la histeresis es `t - desde`.
+    `confirmado` es lo que se da por bueno y lo que cuentan las metricas; es `None` solo
+    antes de la primera observacion. `candidato` es lo que se esta observando ultimamente
+    (`True` = con coche) y `desde` el timestamp del primer fotograma de esa racha: la
+    cuenta de la histeresis es `t - desde`.
     """
 
-    confirmado: Ocupacion = Ocupacion.DESCONOCIDA
+    confirmado: Ocupacion | None = None
     candidato: bool | None = None
     desde: datetime | None = None
 
     @property
     def en_espera(self) -> bool:
-        """Con un estado confirmado y una racha en contra a medias: lo que se pinta en ambar."""
-        return (
-            self.confirmado is not Ocupacion.DESCONOCIDA
-            and self.candidato is not None
-            and self.candidato != (self.confirmado is Ocupacion.OCUPADA)
+        """Con una racha en contra del estado confirmado, a medias: lo que se pinta en ambar."""
+        return self.confirmado is not None and self.candidato != (
+            self.confirmado is Ocupacion.OCUPADA
         )
 
     def observar(
@@ -131,23 +137,26 @@ class _EstadoDePlaza:
         """Registra una observacion en el instante `t` y devuelve `(anterior, nuevo)` si el
         estado confirmado cambia.
 
-        La cuenta es `t - desde`, con `desde` el primer fotograma de la racha actual, y
-        se reinicia en cuanto la observacion cambia: **una sola en contra vuelve a poner
-        `desde` en ahora**. No se cuentan fotogramas en ningun sitio.
+        **La primera observacion es el estado inicial**, sin espera y sin devolver cambio:
+        no viene de ninguna parte. A partir de ahi, la cuenta es `t - desde`, con `desde`
+        el primer fotograma de la racha actual, y se reinicia en cuanto la observacion
+        cambia: **una sola en contra vuelve a poner `desde` en ahora**. No se cuentan
+        fotogramas en ningun sitio.
 
-        Los umbrales: `to_occupied_s` para pasar a ocupada, `to_free_s` para pasar a
-        libre, y `to_occupied_s` para salir de `DESCONOCIDA` **sea cual sea** el destino
-        (ver el docstring del modulo). Se cruza con `>=`: una racha de exactamente
-        `to_occupied_s` segundos ocupa.
+        Los umbrales: `to_occupied_s` para pasar a ocupada y `to_free_s` para pasar a
+        libre, desde el primer fotograma, sin caso especial de arranque. Se cruza con `>=`:
+        una racha de exactamente `to_occupied_s` segundos ocupa.
         """
-        if self.candidato is None or self.candidato != ocupada:
-            self.candidato, self.desde = ocupada, t
         objetivo = Ocupacion.OCUPADA if ocupada else Ocupacion.LIBRE
+        if self.confirmado is None:
+            self.confirmado, self.candidato, self.desde = objetivo, ocupada, t
+            return None
+        if self.candidato != ocupada:
+            self.candidato, self.desde = ocupada, t
         if objetivo is self.confirmado:
             return None
-        assert self.desde is not None  # se acaba de fijar arriba si no lo estaba
-        arrancando = self.confirmado is Ocupacion.DESCONOCIDA
-        umbral = to_occupied_s if arrancando or ocupada else to_free_s
+        assert self.desde is not None  # fijado con la primera observacion
+        umbral = to_occupied_s if ocupada else to_free_s
         if (t - self.desde).total_seconds() < umbral:
             return None
         anterior, self.confirmado = self.confirmado, objetivo
@@ -252,10 +261,12 @@ class ParkingOccupancyAnalyzer:
     Emite `Event("space_occupied")` y `Event("space_freed")` con `{"zone": id}` cuando el
     estado confirmado de una plaza cambia, y en cada `process()` tres metricas sin
     etiquetas —`spaces_free`, `spaces_occupied` y `spaces_total`— mas una
-    `Metric("zone_occupied", 0|1, labels={"zone": id})` por cada plaza cuyo estado ya se
-    conoce. `spaces_total` es lo que permite al dashboard decir **"N libres de M
-    monitorizadas"** y no "de la calle"; la media ponderada por tiempo de `zone_occupied`
-    en `metric_minute` es la fraccion del minuto que esa plaza estuvo ocupada.
+    `Metric("zone_occupied", 0|1, labels={"zone": id})` por plaza. Las cuatro cuadran
+    siempre: `spaces_free + spaces_occupied == spaces_total` y `spaces_occupied` es la suma
+    de los `zone_occupied` del mismo `process()`. `spaces_total` es lo que permite al
+    dashboard decir **"N libres de M monitorizadas"** y no "de la calle"; la media ponderada
+    por tiempo de `zone_occupied` en `metric_minute` es la fraccion del minuto que esa plaza
+    estuvo ocupada.
 
     **Lo que ya se sabe de la escena del proyecto 01** (`projects/01-parking-trafico/fuente.md`):
     las plazas del fondo **no se vigilan porque no se ven** —los coches son manchas de
@@ -332,8 +343,9 @@ class ParkingOccupancyAnalyzer:
 
     # --- Lo que se puede consultar ------------------------------------------------------
 
-    def estado_de(self, zone_id: str) -> Ocupacion:
-        """El estado confirmado de una plaza. `KeyError` si no existe."""
+    def estado_de(self, zone_id: str) -> Ocupacion | None:
+        """El estado confirmado de una plaza, o `None` antes del primer `process()`.
+        `KeyError` si no existe."""
         return self._estados[zone_id].confirmado
 
     def en_espera(self, zone_id: str) -> bool:
@@ -376,10 +388,7 @@ class ParkingOccupancyAnalyzer:
             )
             if cambio is None:
                 continue
-            anterior, nuevo = cambio
-            if anterior is Ocupacion.DESCONOCIDA:
-                # El primer estado no viene de ninguna parte: no es un cambio.
-                continue
+            _, nuevo = cambio
             eventos.append(
                 Event(
                     analyzer=self.name,
@@ -408,41 +417,31 @@ class ParkingOccupancyAnalyzer:
         return ocupadas
 
     def _metricas(self, timestamp: datetime) -> list[Metric]:
-        metricas = [
+        """Las tres globales y una por plaza, calculadas del mismo estado para que cuadren:
+        se llama despues de observar todas las plazas, asi que ninguna esta sin estado."""
+        por_plaza = {
+            zone_id: 1.0 if estado.confirmado is Ocupacion.OCUPADA else 0.0
+            for zone_id, estado in self._estados.items()
+        }
+        ocupadas = sum(por_plaza.values())
+        globales = (
+            (METRICA_LIBRES, float(len(por_plaza)) - ocupadas),
+            (METRICA_OCUPADAS, ocupadas),
+            (METRICA_TOTAL, float(len(por_plaza))),
+        )
+        return [
+            Metric(analyzer=self.name, name=nombre, value=valor, timestamp=timestamp)
+            for nombre, valor in globales
+        ] + [
             Metric(
                 analyzer=self.name,
-                name=METRICA_LIBRES,
-                value=float(self._cuantas(Ocupacion.LIBRE)),
+                name=METRICA_PLAZA,
+                value=valor,
                 timestamp=timestamp,
-            ),
-            Metric(
-                analyzer=self.name,
-                name=METRICA_OCUPADAS,
-                value=float(self._cuantas(Ocupacion.OCUPADA)),
-                timestamp=timestamp,
-            ),
-            Metric(
-                analyzer=self.name,
-                name=METRICA_TOTAL,
-                value=float(len(self.zones)),
-                timestamp=timestamp,
-            ),
-        ]
-        for zone_id, estado in self._estados.items():
-            if estado.confirmado is Ocupacion.DESCONOCIDA:
-                # "Todavia no se" no es un 0 ni un 1: una metrica inventada pesaria en la
-                # media del minuto, y un hueco no (`cvp.storage.aggregation`).
-                continue
-            metricas.append(
-                Metric(
-                    analyzer=self.name,
-                    name=METRICA_PLAZA,
-                    value=1.0 if estado.confirmado is Ocupacion.OCUPADA else 0.0,
-                    timestamp=timestamp,
-                    labels={"zone": zone_id},
-                )
+                labels={"zone": zone_id},
             )
-        return metricas
+            for zone_id, valor in por_plaza.items()
+        ]
 
     def _a_pixeles(self, width: int, height: int) -> tuple[_PlazaEnPixeles, ...]:
         plazas = []
@@ -459,8 +458,8 @@ class ParkingOccupancyAnalyzer:
 
     def annotate(self, image: np.ndarray, tracks: list[Track]) -> np.ndarray:
         """Cada plaza como poligono relleno semitransparente del color de su estado —verde
-        libre, rojo ocupada, ambar esperando la histeresis, gris "todavia no se"— con su
-        id, y el resumen "N libres de M" arriba a la izquierda.
+        libre, rojo ocupada, ambar esperando la histeresis, gris "todavia no se" (solo antes
+        del primer fotograma)— con su id, y el resumen "N libres de M" arriba a la izquierda.
 
         Devuelve un array nuevo; el que recibe queda intacto. Convierte las plazas con la
         forma de **esta** imagen y sin tocar la geometria de `process`: un preview
@@ -489,8 +488,8 @@ class ParkingOccupancyAnalyzer:
 
     @staticmethod
     def _color_de(estado: _EstadoDePlaza) -> Color:
-        if estado.confirmado is Ocupacion.DESCONOCIDA:
-            return GRIS
+        if estado.confirmado is None:
+            return GRIS  # antes del primer fotograma: todavia no se
         if estado.en_espera:
             return AMBAR
         return ROJO if estado.confirmado is Ocupacion.OCUPADA else VERDE

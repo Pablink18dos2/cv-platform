@@ -102,11 +102,11 @@ def metrica(salida: AnalyzerOutput, nombre: str, **labels: str) -> float:
 def arrancar(
     a: ParkingOccupancyAnalyzer, *, ocupadas: Iterable[Poligono] = (), t0: float = 0.0
 ) -> list[AnalyzerOutput]:
-    """Deja determinado el primer estado de todas las plazas: dos fotogramas, en `t0` y
-    `t0 + TO_OCCUPIED_S`, con un coche en cada una de `ocupadas`. No sale ningun evento."""
+    """Fija el estado inicial de todas las plazas con un fotograma en `t0`, con un coche en
+    cada una de `ocupadas`: la primera observacion es el estado inicial, sin evento."""
     dets = [coche(z) for z in ocupadas]
-    salidas = recorrer(a, [(t0, dets), (t0 + TO_OCCUPIED_S, dets)])
-    assert eventos(salidas) == [], "determinar el primer estado no es un cambio"
+    salidas = recorrer(a, [(t0, dets)])
+    assert eventos(salidas) == [], "el estado inicial no es un cambio"
     return salidas
 
 
@@ -219,61 +219,137 @@ def test_ocupar_y_liberar_son_dos_eventos_y_los_umbrales_son_asimetricos() -> No
     ]
 
 
-# --- El primer estado: "todavia no se" ---------------------------------------------------
+# --- El arranque: la primera observacion fija el estado, y desde ahi la misma histeresis ---
 
 
-def test_al_arrancar_una_plaza_ya_ocupada_no_genera_space_occupied_ni_cuenta_como_libre() -> None:
+def test_la_primera_observacion_fija_el_estado_inicial_sin_evento_y_sin_espera() -> None:
+    """Criterio corregido el 2026-09-16: no hay "todavia no se". Una plaza con coche en el
+    primer fotograma cuenta como ocupada **desde ese fotograma**, y una sin el, como libre;
+    ninguna de las dos genera un evento por ello."""
     a = analizador(D01, D02)
     salidas = recorrer(a, cada(0, 8, 1, [coche(D01)]))
     assert eventos(salidas) == [], "lo que ya estaba ocupado al arrancar no es un cambio"
-    # Hasta t = 5 no se sabe nada de ninguna de las dos: ni libres ni ocupadas, pero el
-    # total ya dice cuantas se vigilan.
-    for s in salidas[:6]:
-        assert metrica(s, "spaces_free") == 0.0
-        assert metrica(s, "spaces_occupied") == 0.0
-        assert metrica(s, "spaces_total") == 2.0
-        assert [m for m in s.metrics if m.name == "zone_occupied"] == []
-    # En t = 6 se determinan las dos a la vez.
-    for s in salidas[6:]:
+    for s in salidas:
         assert metrica(s, "spaces_occupied") == 1.0
         assert metrica(s, "spaces_free") == 1.0
+        assert metrica(s, "spaces_total") == 2.0
         assert metrica(s, "zone_occupied", zone="d01") == 1.0
         assert metrica(s, "zone_occupied", zone="d02") == 0.0
     assert a.estado_de("d01") is Ocupacion.OCUPADA
     assert a.estado_de("d02") is Ocupacion.LIBRE
 
 
-def test_el_primer_estado_se_determina_tras_to_occupied_s_tambien_para_una_plaza_vacia() -> None:
-    """`to_free_s` protege una plaza que se dio por ocupada; al arrancar no hay nada que
-    proteger, y esperar 10 s en vez de 6 solo retrasa el dato."""
-    a = analizador()
-    salidas = recorrer(a, cada(0, 10, 1, []))
-    assert [metrica(s, "spaces_free") for s in salidas] == [0.0] * 6 + [1.0] * 5
-    assert eventos(salidas) == []
-
-
-def test_una_observacion_en_contra_antes_de_determinar_el_primer_estado_reinicia_la_cuenta() -> (
-    None
-):
-    """Coche desde t = 0, un fotograma sin el en t = 5, coche otra vez desde t = 6: en
-    t = 11 todavia no se sabe nada, y en t = 12 se da por ocupada, sin evento."""
+def test_el_autobus_que_tapa_una_plaza_ocupada_al_arrancar_no_la_libera() -> None:
+    """Coche en el primer fotograma, tapado desde t = 0,2 hasta t = 8 (menos de
+    `to_free_s`) y visible otra vez: `to_free_s` protege la plaza **desde el primer
+    fotograma**, asi que cero eventos y ocupada todo el rato. (Con el mecanismo anterior
+    se declaraba libre en t = 6,2 y emitia un `space_occupied` falso despues.)"""
     a = analizador()
     con = [coche(D01)]
-    salidas = recorrer(a, cada(0, 4, 1, con) + [(5.0, [])] + cada(6, 11, 1, con))
-    assert a.estado_de("d01") is Ocupacion.DESCONOCIDA
-    assert [metrica(s, "spaces_occupied") for s in salidas] == [0.0] * 12
-    salidas = recorrer(a, [(12.0, con)])
-    assert a.estado_de("d01") is Ocupacion.OCUPADA
-    assert metrica(salidas[0], "spaces_occupied") == 1.0
+    pasos = [(0.0, con)] + cada(0.2, 8.0, 0.2, []) + cada(8.2, 20.0, 0.2, con)
+    salidas = recorrer(a, pasos)
     assert eventos(salidas) == []
+    assert {metrica(s, "spaces_occupied") for s in salidas} == {1.0}
+    assert {metrica(s, "zone_occupied", zone="d01") for s in salidas} == {1.0}
 
 
-def test_antes_del_primer_fotograma_todas_las_plazas_estan_en_desconocida() -> None:
+def test_un_coche_que_pasa_por_delante_de_una_plaza_libre_al_arrancar_no_la_ocupa() -> None:
+    """El simetrico: plaza vacia en el primer fotograma, una deteccion durante los
+    siguientes `to_occupied_s - 1` segundos y se va. Cero eventos, libre todo el rato."""
+    a = analizador()
+    pasos = [(0.0, [])] + cada(1, 1 + TO_OCCUPIED_S - 1, 1, [coche(D01)]) + cada(7, 20, 1, [])
+    salidas = recorrer(a, pasos)
+    assert eventos(salidas) == []
+    assert {metrica(s, "spaces_free") for s in salidas} == {1.0}
+
+
+def test_una_deteccion_que_parpadea_al_arrancar_se_trata_igual_que_en_regimen() -> None:
+    """Coche visible 4 de cada 5 fotogramas a 1 fps, desde el primer fotograma. Con el
+    mecanismo anterior la plaza no salia nunca del limbo; ahora es ocupada desde t = 0 y
+    cada hueco de 1 s es menos que `to_free_s`, asi que se queda ocupada sin eventos:
+    exactamente lo que hace la misma plaza ya confirmada en regimen."""
+    parpadeo = [(float(t), [] if t % 5 == 4 else [coche(D01)]) for t in range(0, 40)]
+
+    al_arrancar = analizador()
+    salidas = recorrer(al_arrancar, parpadeo)
+    assert eventos(salidas) == []
+    assert {metrica(s, "spaces_occupied") for s in salidas} == {1.0}
+    assert al_arrancar.estado_de("d01") is Ocupacion.OCUPADA
+
+    en_regimen = analizador()
+    arrancar(en_regimen, ocupadas=[D01], t0=-30.0)
+    salidas_regimen = recorrer(en_regimen, parpadeo)
+    assert eventos(salidas_regimen) == []
+    assert [metrica(s, "spaces_occupied") for s in salidas_regimen] == [
+        metrica(s, "spaces_occupied") for s in salidas
+    ]
+
+
+def test_ninguna_plaza_genera_un_evento_falso_al_arrancar() -> None:
+    """Tres plazas en tres situaciones al arrancar —ocupada, libre, y ocupada con la
+    deteccion parpadeando— durante 30 s sin que cambie nada de verdad: cero eventos."""
+    a = analizador(D01, D02, D03)
+    pasos = [(float(t), [coche(D01)] + ([coche(D03)] if t % 3 != 2 else [])) for t in range(0, 31)]
+    salidas = recorrer(a, pasos)
+    assert eventos(salidas) == []
+    ultimo = salidas[-1]
+    assert (metrica(ultimo, "spaces_occupied"), metrica(ultimo, "spaces_free")) == (2.0, 1.0)
+
+
+def test_antes_del_primer_fotograma_no_hay_estado_y_una_plaza_desconocida_es_keyerror() -> None:
     a = analizador(D01, D02)
-    assert a.estado_de("d01") is Ocupacion.DESCONOCIDA
-    assert a.estado_de("d02") is Ocupacion.DESCONOCIDA
+    assert a.estado_de("d01") is None
+    assert a.estado_de("d02") is None
+    assert a.resumen() == "0 libres de 2"
     with pytest.raises(KeyError):
         a.estado_de("d99")
+    recorrer(a, [(0.0, [coche(D02)])])
+    assert (a.estado_de("d01"), a.estado_de("d02")) == (Ocupacion.LIBRE, Ocupacion.OCUPADA)
+
+
+# --- Coherencia: las globales cuadran con las de plaza, en cada process() ----------------
+
+
+def afirmar_coherencia(salidas: Iterable[AnalyzerOutput], *, plazas: int) -> None:
+    """`spaces_free + spaces_occupied == spaces_total`, y `spaces_occupied` es la suma de los
+    `zone_occupied` **de ese mismo `process()`**, que son exactamente uno por plaza."""
+    for s in salidas:
+        por_plaza = [m.value for m in s.metrics if m.name == "zone_occupied"]
+        assert len(por_plaza) == plazas
+        assert metrica(s, "spaces_total") == plazas
+        assert metrica(s, "spaces_free") + metrica(s, "spaces_occupied") == plazas
+        assert metrica(s, "spaces_occupied") == sum(por_plaza)
+
+
+def test_las_metricas_globales_cuadran_con_las_de_plaza_en_toda_una_secuencia() -> None:
+    """Arranque con plazas en los dos estados, una ocupacion, una liberacion, un autobus,
+    un coche que pasa y una deteccion que parpadea, a cadencia variable. En **cada**
+    `process()` las tres globales cuadran con la suma de las cuatro `zone_occupied`. Es el
+    invariante que habria cazado la incoherencia que QA midio en SQLite."""
+    a = analizador(D01, D02, D03, D04)
+
+    def dets(t: float) -> list[Detection]:
+        con: list[Detection] = []
+        if t < 20 or t >= 32:  # d01: ocupada al arrancar, la tapa un autobus de 20 a 32 (12 s)
+            con.append(coche(D01))
+        if 10 <= t < 50:  # d02: libre al arrancar, se ocupa en 16 y se libera en 60
+            con.append(coche(D02))
+        if 25 <= t < 28:  # d03: libre, un coche que pasa 3 s
+            con.append(coche(D03))
+        if int(t) % 4 != 3:  # d04: ocupada al arrancar, la deteccion parpadea 3 de 4 s
+            con.append(coche(D04))
+        return con
+
+    tiempos = [i * 0.2 for i in range(0, 50)] + [10.0 + i * 2.0 for i in range(0, 35)]
+    salidas = recorrer(a, [(t, dets(t)) for t in tiempos])
+
+    afirmar_coherencia(salidas, plazas=4)
+    assert sorted((e.name, e.attributes["zone"]) for e in eventos(salidas)) == [
+        ("space_freed", "d01"),
+        ("space_freed", "d02"),
+        ("space_occupied", "d01"),
+        ("space_occupied", "d02"),
+    ]
 
 
 # --- La asignacion: una deteccion, una plaza ----------------------------------------------
@@ -538,9 +614,12 @@ def test_un_zones_json_que_no_existe_falla_diciendo_la_ruta(tmp_path: Path) -> N
 # --- Lo que sale -----------------------------------------------------------------------------
 
 
-def test_cada_process_emite_las_tres_metricas_globales_y_una_por_plaza_conocida() -> None:
+def test_cada_process_emite_las_tres_metricas_globales_y_una_por_plaza_desde_el_primero() -> None:
     a = analizador(D01, D02, D03, name="plazas")
-    arrancar(a, ocupadas=[D02])
+    (primera,) = recorrer(a, [(0.0, [coche(D02)])])
+    assert sorted(m.name for m in primera.metrics) == sorted(
+        ["spaces_free", "spaces_occupied", "spaces_total"] + ["zone_occupied"] * 3
+    ), "tambien en el primer fotograma: no hay plazas sin estado"
     (salida,) = recorrer(a, [(10.0, [coche(D02)])])
     nombres = sorted(m.name for m in salida.metrics)
     assert nombres == sorted(
@@ -684,29 +763,29 @@ def test_annotate_devuelve_un_array_nuevo_y_deja_el_original_intacto_byte_a_byte
 
 
 def test_annotate_pinta_cada_plaza_del_color_de_su_estado() -> None:
-    """Verde libre, rojo ocupada, ambar mientras espera la histeresis, gris "todavia no se".
-    `D03` alterna en los primeros fotogramas y por eso sigue sin determinarse cuando las
-    otras ya lo estan; a `D04` le acaba de llegar un coche."""
+    """Verde libre, rojo ocupada, ambar mientras espera la histeresis en cualquiera de los
+    dos sentidos. (El gris de "todavia no se" solo existe antes del primer fotograma; ver
+    el test de `annotate` sin `process`.) A `D03` le acaba de llegar un coche; a `D04` se
+    le acaba de ir."""
     a = analizador(D01, D02, D03, D04)
     recorrer(
         a,
         [
-            (0.0, [coche(D02), coche(D03)]),
-            (3.0, [coche(D02)]),
-            (6.0, [coche(D02), coche(D03)]),
-            (7.0, [coche(D02), coche(D03), coche(D04)]),
+            (0.0, [coche(D02), coche(D04)]),
+            (6.0, [coche(D02), coche(D04)]),
+            (7.0, [coche(D02), coche(D03)]),
         ],
     )
-    assert a.estado_de("d01") is Ocupacion.LIBRE
-    assert a.estado_de("d02") is Ocupacion.OCUPADA
-    assert a.estado_de("d03") is Ocupacion.DESCONOCIDA
-    assert a.estado_de("d04") is Ocupacion.LIBRE and a.en_espera("d04")
+    assert a.estado_de("d01") is Ocupacion.LIBRE and not a.en_espera("d01")
+    assert a.estado_de("d02") is Ocupacion.OCUPADA and not a.en_espera("d02")
+    assert a.estado_de("d03") is Ocupacion.LIBRE and a.en_espera("d03")
+    assert a.estado_de("d04") is Ocupacion.OCUPADA and a.en_espera("d04")
 
     anotada = a.annotate(np.zeros((ALTO, ANCHO, 3), dtype=np.uint8), [])
     colores = {
         z.id: dominante(anotada[centroide(z)[1], centroide(z)[0]]) for z in (D01, D02, D03, D04)
     }
-    assert colores == {"d01": "verde", "d02": "rojo", "d03": "gris", "d04": "ambar"}
+    assert colores == {"d01": "verde", "d02": "rojo", "d03": "ambar", "d04": "ambar"}
 
 
 def test_annotate_escribe_el_id_de_cada_plaza_y_el_resumen_n_libres_de_m_en_una_esquina() -> None:
@@ -749,9 +828,9 @@ BAHIAS_1080P = FIXTURES / "calle-1080p-bahias.json"
 @pytest.mark.slow
 def test_sobre_video_real_las_tres_plazas_del_primer_plano_acaban_ocupadas() -> None:
     """Con el detector de verdad y `to_occupied_s` corto para que quepa en 6 s: las tres
-    bahias tienen coche todo el rato, asi que acaban **ocupadas**, `spaces_total` es 3 en
-    cada fotograma, y —porque estaban ocupadas desde el primer fotograma— **no sale ningun
-    evento**: determinar el primer estado no es un `space_occupied`.
+    bahias tienen coche todo el rato, asi que estan **ocupadas desde el primer fotograma**
+    y acaban ocupadas, `spaces_total` es 3 en cada fotograma, las globales cuadran con las
+    de plaza, y **no sale ningun evento**: el estado inicial no es un `space_occupied`.
 
     Sin tracker a proposito: este analizador no lo necesita, y con el umbral por defecto
     del tracker se quedaria sin ver casi la mitad de los coches (#7).
@@ -783,10 +862,9 @@ def test_sobre_video_real_las_tres_plazas_del_primer_plano_acaban_ocupadas() -> 
     assert [e for _, s in salidas for e in s.events] == []
     assert {metrica(s, "spaces_total") for _, s in salidas} == {3.0}
     assert {m.analyzer for _, s in salidas for m in s.metrics} == {"plazas"}
-    limite = INICIO + timedelta(seconds=2.0)
+    afirmar_coherencia((s for _, s in salidas), plazas=3)
     for f, s in salidas:
-        esperado = 3.0 if f.timestamp >= limite else 0.0
-        assert metrica(s, "spaces_occupied") == esperado, f"en {f.timestamp}"
+        assert metrica(s, "spaces_occupied") == 3.0, f"en {f.timestamp}"
         assert metrica(s, "spaces_free") == 0.0
     assert a.resumen() == "0 libres de 3"
     assert all(a.estado_de(z.id) is Ocupacion.OCUPADA for z in a.zones)
