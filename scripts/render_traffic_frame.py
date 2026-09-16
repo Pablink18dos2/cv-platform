@@ -65,8 +65,9 @@ def main() -> None:
     try:
         ultimo = None
         for fotograma in origen.frames():
-            tracks = tracker.update(fotograma, detector.detect(fotograma))
-            salida = analizador.process(fotograma, tracks)
+            detecciones = detector.detect(fotograma)
+            tracks = tracker.update(fotograma, detecciones)
+            salida = analizador.process(fotograma, tracks, detecciones)
             for evento in salida.events:
                 print(f"fotograma {fotograma.index:3d}: {dict(evento.attributes)}")
             ultimo = (fotograma, tracks)

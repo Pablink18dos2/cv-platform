@@ -736,3 +736,65 @@ def test_annotate_funciona_antes_del_primer_process_y_con_otra_resolucion() -> N
         assert dominante(anotada[y, x]) == "gris"
     assert a.resolucion is None
     assert a.resumen() == "0 libres de 2"
+
+
+# --- Con video real ---------------------------------------------------------------------
+
+FIXTURE_1080P = Path(__file__).resolve().parents[1] / "fixtures" / "video" / "calle-1080p-6s.mp4"
+# Las tres bahias en bateria del lado derecho, las del primer plano, donde `fuente.md` dice
+# que la deteccion es fiable. Colocadas con `scripts/render_parking_frame.py`.
+BAHIAS_1080P = FIXTURES / "calle-1080p-bahias.json"
+
+
+@pytest.mark.slow
+def test_sobre_video_real_las_tres_plazas_del_primer_plano_acaban_ocupadas() -> None:
+    """Con el detector de verdad y `to_occupied_s` corto para que quepa en 6 s: las tres
+    bahias tienen coche todo el rato, asi que acaban **ocupadas**, `spaces_total` es 3 en
+    cada fotograma, y —porque estaban ocupadas desde el primer fotograma— **no sale ningun
+    evento**: determinar el primer estado no es un `space_occupied`.
+
+    Sin tracker a proposito: este analizador no lo necesita, y con el umbral por defecto
+    del tracker se quedaria sin ver casi la mitad de los coches (#7).
+    """
+    from cvp.detectors import YoloDetector
+    from cvp.sources import FileVideoSource
+
+    detector = YoloDetector(
+        "yolo11n.pt", imgsz=640, conf=0.35, classes=["car", "motorcycle", "bus", "truck"]
+    )
+    a = ParkingOccupancyAnalyzer(
+        cargar_zonas(BAHIAS_1080P),
+        name="plazas",
+        occupied_iou=0.35,
+        to_occupied_s=2.0,
+        to_free_s=4.0,
+    )
+    origen = FileVideoSource(FIXTURE_1080P, target_fps=5, start_time=INICIO)
+    origen.open()
+    try:
+        salidas: list[tuple[Frame, AnalyzerOutput]] = []
+        for fotograma_real in origen.frames():
+            detecciones = detector.detect(fotograma_real)
+            salidas.append((fotograma_real, a.process(fotograma_real, [], detecciones)))
+    finally:
+        origen.close()
+
+    assert len(salidas) >= 25, "6 s a 5 fps deberian dar unos 30 fotogramas"
+    assert [e for _, s in salidas for e in s.events] == []
+    assert {metrica(s, "spaces_total") for _, s in salidas} == {3.0}
+    assert {m.analyzer for _, s in salidas for m in s.metrics} == {"plazas"}
+    limite = INICIO + timedelta(seconds=2.0)
+    for f, s in salidas:
+        esperado = 3.0 if f.timestamp >= limite else 0.0
+        assert metrica(s, "spaces_occupied") == esperado, f"en {f.timestamp}"
+        assert metrica(s, "spaces_free") == 0.0
+    assert a.resumen() == "0 libres de 3"
+    assert all(a.estado_de(z.id) is Ocupacion.OCUPADA for z in a.zones)
+    # Y la anotacion sobre el fotograma real pinta las tres en rojo. La comprobacion visual
+    # es `scripts/render_parking_frame.py`; esto solo fija que el color es el del estado.
+    ultimo = salidas[-1][0]
+    anotada = a.annotate(ultimo.image, [])
+    for zona in a.zones:
+        x, y = centroide(zona)
+        antes, despues = ultimo.image[y, x].astype(int), anotada[y, x].astype(int)
+        assert despues[2] - antes[2] > despues[1] - antes[1], f"{zona.id} tendria que ser roja"

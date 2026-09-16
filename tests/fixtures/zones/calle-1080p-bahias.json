@@ -1,0 +1,8 @@
+{
+  "comment": "Las tres bahias en bateria del lado derecho del fixture calle-1080p-6s.mp4, las del primer plano, donde fuente.md dice que la deteccion es fiable. Colocadas sobre el fotograma con scripts/render_parking_frame.py. Las tres tienen coche durante los 6 s.",
+  "zones": [
+    { "id": "bahia-1", "polygon": [[0.672, 0.690], [0.740, 0.668], [0.752, 0.750], [0.685, 0.772]] },
+    { "id": "bahia-2", "polygon": [[0.724, 0.748], [0.808, 0.725], [0.822, 0.845], [0.738, 0.869]] },
+    { "id": "bahia-3", "polygon": [[0.827, 0.840], [0.895, 0.815], [0.908, 0.935], [0.840, 0.961]] }
+  ]
+}
