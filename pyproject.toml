@@ -70,6 +70,11 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q --strict-markers -m 'not network'"
+filterwarnings = [
+    # Starlette >= 1.6 prefiere `httpx2` para su `TestClient` y avisa si encuentra `httpx`.
+    # #12 autoriza `httpx`, que funciona; el aviso se silencia hasta que se decida el cambio.
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated",
+]
 markers = [
     "slow: carga un modelo real o decodifica video; segundos, no milisegundos",
     "network: sale a internet; fuera de la suite por defecto y de CI",
