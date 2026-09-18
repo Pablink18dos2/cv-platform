@@ -1,0 +1,800 @@
+openapi: 3.1.0
+info:
+  title: CV Platform API
+  description: |
+    API de lectura de CV Platform. Sirve lo que el worker escribe: los proyectos, sus
+    metricas agregadas por minuto, sus eventos y el ultimo fotograma anotado.
+
+    Es de solo lectura y no sabe nada del worker: no lo arranca ni lo para. La semantica de
+    las metricas —que columna usar para que, y que significan un hueco y un `null`— esta en
+    `_docs/api.md`, que hay que leer antes de pintar una grafica.
+  version: 0.1.0
+paths:
+  /api/v1/projects:
+    get:
+      tags:
+      - projects
+      summary: Los proyectos que han escrito algo
+      description: 'Un proyecto aparece en cuanto su worker escribe el primer lote. Con la base vacia,
+        la lista esta vacia: no es un error.'
+      operationId: list_projects
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectList'
+        '422':
+          description: Un parametro no pasa la validacion.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/projects/{id}:
+    get:
+      tags:
+      - projects
+      summary: Un proyecto, con su ultima ejecucion y sus analizadores
+      operationId: get_project
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          description: 'El `id:` del `project.yaml`: minusculas, digitos y guiones.'
+          examples:
+          - 01-parking-trafico
+          title: Id
+        description: 'El `id:` del `project.yaml`: minusculas, digitos y guiones.'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectDetail'
+        '422':
+          description: Un parametro no pasa la validacion.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: '`project_not_found`.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/projects/{id}/metrics:
+    get:
+      tags:
+      - metrics
+      summary: Series por minuto, regulares y con `null` en los huecos
+      operationId: get_metrics
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          description: 'El `id:` del `project.yaml`: minusculas, digitos y guiones.'
+          examples:
+          - 01-parking-trafico
+          title: Id
+        description: 'El `id:` del `project.yaml`: minusculas, digitos y guiones.'
+      - name: analyzer
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: El `name` del analizador en el YAML.
+          title: Analyzer
+        description: El `name` del analizador en el YAML.
+      - name: name
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 'El nombre de la metrica: `crossings`...'
+          title: Name
+        description: 'El nombre de la metrica: `crossings`...'
+      - name: labels
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 'Filtro por igualdad de etiquetas, `clave:valor` separados por comas: `direction:norte`
+            o `line:principal,direction:norte`. Las claves que no se dan no se miran.'
+          title: Labels
+        description: 'Filtro por igualdad de etiquetas, `clave:valor` separados por comas: `direction:norte`
+          o `line:principal,direction:norte`. Las claves que no se dan no se miran.'
+      - name: from
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          description: 'ISO-8601 **con zona**: `2026-08-24T14:20:00Z`. Un `+` en la zona hay que codificarlo
+            (`%2B`); mejor `Z`.'
+          title: From
+        description: 'ISO-8601 **con zona**: `2026-08-24T14:20:00Z`. Un `+` en la zona hay que codificarlo
+          (`%2B`); mejor `Z`.'
+      - name: to
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          description: 'ISO-8601 **con zona**: `2026-08-24T14:20:00Z`. Un `+` en la zona hay que codificarlo
+            (`%2B`); mejor `Z`.'
+          title: To
+        description: 'ISO-8601 **con zona**: `2026-08-24T14:20:00Z`. Un `+` en la zona hay que codificarlo
+          (`%2B`); mejor `Z`.'
+      - name: step
+        in: query
+        required: false
+        schema:
+          const: minute
+          type: string
+          description: Solo `minute` por ahora.
+          default: minute
+          title: Step
+        description: Solo `minute` por ahora.
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SeriesResponse'
+        '422':
+          description: Un parametro no pasa la validacion.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: '`project_not_found`.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '400':
+          description: '`invalid_range`.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/projects/{id}/metrics/latest:
+    get:
+      tags:
+      - metrics
+      summary: 'El ultimo minuto con muestras de cada serie: los KPIs'
+      operationId: get_latest_metrics
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          description: 'El `id:` del `project.yaml`: minusculas, digitos y guiones.'
+          examples:
+          - 01-parking-trafico
+          title: Id
+        description: 'El `id:` del `project.yaml`: minusculas, digitos y guiones.'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LatestResponse'
+        '422':
+          description: Un parametro no pasa la validacion.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: '`project_not_found`.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/projects/{id}/events:
+    get:
+      tags:
+      - events
+      summary: Eventos por timestamp descendente, paginados con `before`
+      operationId: list_events
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          description: 'El `id:` del `project.yaml`: minusculas, digitos y guiones.'
+          examples:
+          - 01-parking-trafico
+          title: Id
+        description: 'El `id:` del `project.yaml`: minusculas, digitos y guiones.'
+      - name: analyzer
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: El `name` del analizador.
+          title: Analyzer
+        description: El `name` del analizador.
+      - name: name
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: '`line_crossing`, `space_freed`...'
+          title: Name
+        description: '`line_crossing`, `space_freed`...'
+      - name: from
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          description: ISO-8601 con zona (`2026-08-24T14:20:00Z`). Incluido.
+          title: From
+        description: ISO-8601 con zona (`2026-08-24T14:20:00Z`). Incluido.
+      - name: to
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          description: ISO-8601 con zona (`2026-08-24T14:20:00Z`). Incluido.
+          title: To
+        description: ISO-8601 con zona (`2026-08-24T14:20:00Z`). Incluido.
+      - name: before
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          description: 'Cursor: solo eventos **anteriores** a este instante (exclusivo).'
+          title: Before
+        description: 'Cursor: solo eventos **anteriores** a este instante (exclusivo).'
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 500
+          minimum: 1
+          description: Eventos por pagina, hasta 500.
+          default: 100
+          title: Limit
+        description: Eventos por pagina, hasta 500.
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventsResponse'
+        '422':
+          description: Un parametro no pasa la validacion.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: '`project_not_found`.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '400':
+          description: '`invalid_range`.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/projects/{id}/snapshot.jpg:
+    get:
+      tags:
+      - stream
+      summary: El ultimo fotograma, como JPEG
+      operationId: get_snapshot
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          description: 'El `id:` del `project.yaml`: minusculas, digitos y guiones.'
+          examples:
+          - 01-parking-trafico
+          title: Id
+        description: 'El `id:` del `project.yaml`: minusculas, digitos y guiones.'
+      responses:
+        '200':
+          description: El ultimo fotograma.
+          content:
+            image/jpeg: {}
+        '422':
+          description: Un parametro no pasa la validacion.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: '`snapshot_not_found`.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/projects/{id}/stream.mjpg:
+    get:
+      tags:
+      - stream
+      summary: El fotograma en directo, como MJPEG
+      operationId: get_stream
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          description: 'El `id:` del `project.yaml`: minusculas, digitos y guiones.'
+          examples:
+          - 01-parking-trafico
+          title: Id
+        description: 'El `id:` del `project.yaml`: minusculas, digitos y guiones.'
+      responses:
+        '200':
+          description: Un JPEG por cada cambio del fichero. No termina.
+          content:
+            multipart/x-mixed-replace; boundary=cvp-frame: {}
+        '422':
+          description: Un parametro no pasa la validacion.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: '`snapshot_not_found`.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+components:
+  schemas:
+    ErrorBody:
+      properties:
+        code:
+          type: string
+          title: Code
+          description: Un identificador estable, para que el cliente decida.
+        message:
+          type: string
+          title: Message
+          description: 'Para una persona. No es estable: no se compara.'
+        details:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/ErrorDetail'
+            type: array
+          - type: 'null'
+          title: Details
+          description: 'Solo en `validation_error`: un elemento por campo.'
+      type: object
+      required:
+      - code
+      - message
+      title: ErrorBody
+    ErrorDetail:
+      properties:
+        field:
+          type: string
+          title: Field
+          description: El parametro que no pasa la validacion, p. ej. `from`.
+        message:
+          type: string
+          title: Message
+      type: object
+      required:
+      - field
+      - message
+      title: ErrorDetail
+    ErrorResponse:
+      properties:
+        error:
+          $ref: '#/components/schemas/ErrorBody'
+      type: object
+      required:
+      - error
+      title: ErrorResponse
+      description: La unica forma de error de la API.
+    EventOut:
+      properties:
+        analyzer:
+          type: string
+          title: Analyzer
+        name:
+          type: string
+          title: Name
+        timestamp:
+          type: string
+          format: date-time
+          title: Timestamp
+        attributes:
+          additionalProperties: true
+          type: object
+          title: Attributes
+        run_id:
+          type: string
+          title: Run Id
+      type: object
+      required:
+      - analyzer
+      - name
+      - timestamp
+      - attributes
+      - run_id
+      title: EventOut
+      description: Un evento en la forma canonica de `cvp.core.serialization`, mas su `run_id`.
+    EventsResponse:
+      properties:
+        project_id:
+          type: string
+          title: Project Id
+        events:
+          items:
+            $ref: '#/components/schemas/EventOut'
+          type: array
+          title: Events
+          description: Por timestamp descendente.
+        next_before:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Next Before
+          description: Lo que pasar como `before` para la pagina siguiente. `null` si no hay mas.
+      type: object
+      required:
+      - project_id
+      - events
+      - next_before
+      title: EventsResponse
+    LatestPoint:
+      properties:
+        minute:
+          type: string
+          format: date-time
+          title: Minute
+          description: El minuto UTC, truncado, al que pertenece el punto.
+        samples:
+          type: integer
+          title: Samples
+          description: 'Muestras del minuto. Siempre > 0: una fila con 0 se sirve como `null`.'
+        seconds:
+          type: number
+          title: Seconds
+          description: Segundos del minuto cubiertos por muestras. **Puede pasar de 60** si dos ejecuciones
+            cubrieron el mismo minuto; no es una fraccion de cobertura.
+        sum_value:
+          type: number
+          title: Sum Value
+          description: Suma de los valores. Es el conteo de una metrica de conteo (`crossings`).
+        mean_value:
+          type: number
+          title: Mean Value
+          description: Media **en el tiempo** (`integral / seconds`). Es el valor de un gauge (`vehicles_in_scene`,
+            `zone_occupied`); no significa nada para un conteo.
+        min_value:
+          type: number
+          title: Min Value
+        max_value:
+          type: number
+          title: Max Value
+        integral:
+          type: number
+          title: Integral
+          description: Suma de valor x segundos. `mean_value` sale de aqui.
+        analyzer:
+          type: string
+          title: Analyzer
+        name:
+          type: string
+          title: Name
+        labels:
+          additionalProperties:
+            type: string
+          type: object
+          title: Labels
+      type: object
+      required:
+      - minute
+      - samples
+      - seconds
+      - sum_value
+      - mean_value
+      - min_value
+      - max_value
+      - integral
+      - analyzer
+      - name
+      - labels
+      title: LatestPoint
+    LatestResponse:
+      properties:
+        project_id:
+          type: string
+          title: Project Id
+        latest:
+          items:
+            $ref: '#/components/schemas/LatestPoint'
+          type: array
+          title: Latest
+          description: El ultimo minuto con muestras de cada `(analyzer, name, labels)`.
+      type: object
+      required:
+      - project_id
+      - latest
+      title: LatestResponse
+    MinutePoint:
+      properties:
+        minute:
+          type: string
+          format: date-time
+          title: Minute
+          description: El minuto UTC, truncado, al que pertenece el punto.
+        samples:
+          type: integer
+          title: Samples
+          description: 'Muestras del minuto. Siempre > 0: una fila con 0 se sirve como `null`.'
+        seconds:
+          type: number
+          title: Seconds
+          description: Segundos del minuto cubiertos por muestras. **Puede pasar de 60** si dos ejecuciones
+            cubrieron el mismo minuto; no es una fraccion de cobertura.
+        sum_value:
+          type: number
+          title: Sum Value
+          description: Suma de los valores. Es el conteo de una metrica de conteo (`crossings`).
+        mean_value:
+          type: number
+          title: Mean Value
+          description: Media **en el tiempo** (`integral / seconds`). Es el valor de un gauge (`vehicles_in_scene`,
+            `zone_occupied`); no significa nada para un conteo.
+        min_value:
+          type: number
+          title: Min Value
+        max_value:
+          type: number
+          title: Max Value
+        integral:
+          type: number
+          title: Integral
+          description: Suma de valor x segundos. `mean_value` sale de aqui.
+      type: object
+      required:
+      - minute
+      - samples
+      - seconds
+      - sum_value
+      - mean_value
+      - min_value
+      - max_value
+      - integral
+      title: MinutePoint
+      description: Un minuto de `metric_minute`, con todas sus columnas. `_docs/api.md` dice cual usar.
+    ProjectDetail:
+      properties:
+        id:
+          type: string
+          title: Id
+        name:
+          type: string
+          title: Name
+        status:
+          type: string
+          enum:
+          - running
+          - stopped
+          - stale
+          title: Status
+          description: 'Derivado de la ultima ejecucion: `running` si ha escrito en los ultimos 90 s,
+            `stopped` si escribio alguna vez pero hace mas, `stale` si arranco y no ha escrito nada todavia
+            (o no tiene ejecuciones).'
+        last_seen_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Last Seen At
+          description: El instante de la ultima muestra escrita por la ultima ejecucion.
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        last_run:
+          anyOf:
+          - $ref: '#/components/schemas/RunInfo'
+          - type: 'null'
+        analyzers:
+          items:
+            type: string
+          type: array
+          title: Analyzers
+          description: Los `analyzer` que han escrito metricas por minuto en este proyecto.
+      type: object
+      required:
+      - id
+      - name
+      - status
+      - last_seen_at
+      - created_at
+      - last_run
+      - analyzers
+      title: ProjectDetail
+    ProjectList:
+      properties:
+        projects:
+          items:
+            $ref: '#/components/schemas/ProjectSummary'
+          type: array
+          title: Projects
+      type: object
+      required:
+      - projects
+      title: ProjectList
+    ProjectSummary:
+      properties:
+        id:
+          type: string
+          title: Id
+        name:
+          type: string
+          title: Name
+        status:
+          type: string
+          enum:
+          - running
+          - stopped
+          - stale
+          title: Status
+          description: 'Derivado de la ultima ejecucion: `running` si ha escrito en los ultimos 90 s,
+            `stopped` si escribio alguna vez pero hace mas, `stale` si arranco y no ha escrito nada todavia
+            (o no tiene ejecuciones).'
+        last_seen_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Last Seen At
+          description: El instante de la ultima muestra escrita por la ultima ejecucion.
+      type: object
+      required:
+      - id
+      - name
+      - status
+      - last_seen_at
+      title: ProjectSummary
+    RunInfo:
+      properties:
+        id:
+          type: string
+          title: Id
+          description: 'El `run_id` canonico: `AAAAMMDDTHHMMSSZ-xxxxxxxx`.'
+        started_at:
+          type: string
+          format: date-time
+          title: Started At
+          description: Reloj de pared, sacado del propio `run_id`.
+        ended_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Ended At
+          description: 'El instante de la **ultima muestra escrita**, no del apagado: un worker que muere
+            no cierra su ejecucion. `null` mientras no ha escrito nada.'
+      type: object
+      required:
+      - id
+      - started_at
+      - ended_at
+      title: RunInfo
+    Series:
+      properties:
+        analyzer:
+          type: string
+          title: Analyzer
+        name:
+          type: string
+          title: Name
+        labels:
+          additionalProperties:
+            type: string
+          type: object
+          title: Labels
+        points:
+          items:
+            anyOf:
+            - $ref: '#/components/schemas/MinutePoint'
+            - type: 'null'
+          type: array
+          title: Points
+          description: 'Un elemento por minuto de `[from, to]`, en orden. `null` es un minuto sin fila
+            (o con `samples == 0`): para un conteo es un 0, para un gauge es ''sin dato''.'
+      type: object
+      required:
+      - analyzer
+      - name
+      - labels
+      - points
+      title: Series
+    SeriesResponse:
+      properties:
+        project_id:
+          type: string
+          title: Project Id
+        from:
+          type: string
+          format: date-time
+          title: From
+          description: Primer minuto de la rejilla, incluido.
+        to:
+          type: string
+          format: date-time
+          title: To
+          description: Ultimo minuto de la rejilla, incluido.
+        step:
+          type: string
+          const: minute
+          title: Step
+        series:
+          items:
+            $ref: '#/components/schemas/Series'
+          type: array
+          title: Series
+          description: Una por `(analyzer, name, labels)` con datos en la ventana.
+      type: object
+      required:
+      - project_id
+      - from
+      - to
+      - step
+      - series
+      title: SeriesResponse
+tags:
+- name: projects
+  description: Los proyectos y su estado.
+- name: metrics
+  description: Series por minuto y ultimos valores.
+- name: events
+  description: Eventos en la forma canonica, paginados.
+- name: stream
+  description: El ultimo fotograma, como JPEG o como MJPEG.

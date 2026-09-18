@@ -5,6 +5,11 @@ description = "Plataforma local de vision por computador: connectors de video, m
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    # `cvp.api` es la API de lectura de #12: FastAPI genera el `openapi.yaml` que es el
+    # contrato con el frontend y uvicorn la sirve. Son las unicas dependencias de la API
+    # ademas de `cvp.storage`; `tests/unit/test_api_aislamiento.py` comprueba en un
+    # subproceso que arrancarla no arrastra torch, cv2, ultralytics ni yt-dlp.
+    "fastapi>=0.115",
     # `cvp.core` importa numpy directamente (el buffer de `Frame`), asi que se declara
     # aqui en vez de seguir entrando de forma transitiva por ultralytics: el core tiene
     # que poder instalarse sin el detector y seguir funcionando.
@@ -27,6 +32,7 @@ dependencies = [
     "supervision>=0.25",
     "trackers>=0.1",
     "ultralytics>=8.3",
+    "uvicorn>=0.30",
     "yt-dlp>=2026.8.19",
 ]
 
@@ -54,6 +60,8 @@ explicit = true
 
 [dependency-groups]
 dev = [
+    # El `TestClient` de FastAPI habla HTTP con httpx. Solo lo usan los tests de la API.
+    "httpx>=0.27",
     "pytest>=8.3",
     "pytest-cov>=6.0",
     "ruff>=0.9",
