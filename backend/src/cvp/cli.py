@@ -28,6 +28,7 @@ import argparse
 import contextlib
 import logging
 import os
+import signal
 import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
@@ -302,8 +303,13 @@ def _api(
         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
     )
     app = crear_app(ajustes)
-    # uvicorn captura el primer Ctrl+C y apaga limpio; el que se suprime es el que se escapa
-    # si llega mientras arranca. El usuario ha pedido salir, y salir con 0 es lo normal.
+    # uvicorn captura Ctrl+C, apaga limpio y, al terminar, **vuelve a lanzar la senal** con
+    # el manejador original puesto, para que el proceso "termine como manda la senal". Con
+    # SIGINT eso es un `KeyboardInterrupt`, que aqui se suprime: el usuario ha pedido salir
+    # y salir con 0 es lo normal. En Windows, Ctrl+Break llega como SIGBREAK, cuyo manejador
+    # por defecto aborta con codigo 3 (medido en #12); se le pone el mismo que a Ctrl+C.
+    if hasattr(signal, "SIGBREAK"):
+        signal.signal(signal.SIGBREAK, signal.default_int_handler)
     with contextlib.suppress(KeyboardInterrupt):
         uvicorn.run(app, host=ajustes.host, port=ajustes.port, log_level=log_level.lower())
     return 0
