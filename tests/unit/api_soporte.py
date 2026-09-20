@@ -12,12 +12,16 @@ Es un modulo y no el `conftest.py` para que los tests puedan importar de el por 
 
 from __future__ import annotations
 
+import builtins
+import io
+import os
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+import pytest
 
 from cvp.api import Settings
 from cvp.core import AnalyzerOutput, Event, Frame, Metric
@@ -140,3 +144,28 @@ class Base:
         for almacen in self._sinks:
             almacen.engine.dispose()
         self._sinks.clear()
+
+
+class VigilanteDeFicheros:
+    """Anota cada objeto de fichero que se abre sobre `ruta`, por cualquier camino."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch, ruta: Path) -> None:
+        self.ruta = ruta.resolve()
+        self.abiertos: list[Any] = []
+        original = io.open
+
+        def vigilado(fichero: Any, *args: Any, **kwargs: Any) -> Any:
+            objeto = original(fichero, *args, **kwargs)
+            try:
+                if isinstance(fichero, str | os.PathLike) and Path(fichero).resolve() == self.ruta:
+                    self.abiertos.append(objeto)
+            except OSError:  # pragma: no cover - una ruta que no se puede resolver
+                pass
+            return objeto
+
+        monkeypatch.setattr(io, "open", vigilado)
+        monkeypatch.setattr(builtins, "open", vigilado)
+
+    @property
+    def sin_cerrar(self) -> list[Any]:
+        return [f for f in self.abiertos if not f.closed]
