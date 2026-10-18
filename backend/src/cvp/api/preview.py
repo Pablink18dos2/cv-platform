@@ -20,12 +20,24 @@ descriptor abierto mientras transmite, y el MJPEG lo tendria abierto casi siempr
 aqui el fichero se lee **de una vez** (`read_bytes`: abre, lee, cierra) y lo que se
 transmite es la copia en memoria. Son ~60 KB por fotograma: no hay nada que ganar
 transmitiendo desde el descriptor.
+
+## La carrera es en los dos sentidos
+
+Leer entero reduce la ventana, no la cierra: QA midio en #12 que con un lector conectado
+siguen fallando 1-8 % de los `os.replace` del sink a 5 fps. Y del otro lado, **abrir el
+fichero mientras el sink lo reemplaza falla tambien**, y en Windows no es un
+`FileNotFoundError` sino un `PermissionError` (`[Errno 13]`): QA vio morir el MJPEG en 4
+de 8 ejecuciones por eso. Las dos excepciones significan lo mismo —"el sink esta en
+ello"— y aqui se tratan igual: el stream espera a la vuelta siguiente y el snapshot
+reintenta unas pocas veces (`leer_fotograma_con_reintentos`). La ventana del `os.replace`
+es de microsegundos; lo que no puede pasar es que un choque con ella mate la respuesta.
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,8 +45,10 @@ from pathlib import Path
 __all__ = [
     "DIRECTORIO_PREVIEW",
     "Fotograma",
+    "PreviewOcupado",
     "fotogramas_nuevos",
     "leer_fotograma",
+    "leer_fotograma_con_reintentos",
     "ruta_de_preview",
 ]
 
@@ -62,25 +76,60 @@ class Fotograma:
     version: tuple[int, int]
 
 
+class PreviewOcupado(Exception):
+    """El sink esta reemplazando el fichero en este instante. Se vuelve a intentar."""
+
+
 def leer_fotograma(ruta: Path) -> Fotograma | None:
-    """El fichero entero, o `None` si no existe.
+    """El fichero entero, o `None` si no existe. `PreviewOcupado` si el sink lo esta
+    reemplazando ahora mismo.
 
     Abre, lee y cierra: al devolver, no queda ningun descriptor sobre el fichero. Un
-    `FileNotFoundError` a mitad —el sink acaba de reemplazarlo— cuenta como ausente y se
-    vuelve a intentar en la siguiente vuelta, no como error.
+    `FileNotFoundError` a mitad —el sink acaba de reemplazarlo— cuenta como ausente. Un
+    `PermissionError` es la misma carrera vista desde Windows: el fichero existe, pero
+    durante el `os.replace` no se deja abrir. Ni lo uno ni lo otro es un error: se vuelve
+    a intentar, en la siguiente vuelta del stream o en el siguiente reintento del snapshot.
     """
     try:
         estado = os.stat(ruta)
         datos = ruta.read_bytes()
     except FileNotFoundError:
         return None
+    except PermissionError as exc:
+        raise PreviewOcupado(str(exc)) from exc
     return Fotograma(datos=datos, version=(estado.st_mtime_ns, estado.st_size))
+
+
+def leer_fotograma_con_reintentos(
+    ruta: Path,
+    *,
+    intentos: int = 5,
+    espera_s: float = 0.02,
+    dormir: Callable[[float], None] = time.sleep,
+) -> Fotograma | None:
+    """`leer_fotograma`, insistiendo si el sink esta reemplazando el fichero.
+
+    Es para el snapshot, que tiene que responder ahora: la ventana del `os.replace` es
+    de microsegundos, asi que el segundo intento casi siempre basta y el peor caso son
+    `intentos x espera_s` (100 ms). Si sigue ocupado, se rinde con `PreviewOcupado` y
+    quien llama decide (el snapshot responde 503 y el cliente vuelve a pedir).
+    """
+    if intentos < 1:
+        raise ValueError(f"intentos es un numero >= 1, no {intentos!r}")
+    for intento in range(intentos):
+        try:
+            return leer_fotograma(ruta)
+        except PreviewOcupado:
+            if intento == intentos - 1:
+                raise
+            dormir(espera_s)
+    raise AssertionError("inalcanzable")  # pragma: no cover
 
 
 def _version_de(ruta: Path) -> tuple[int, int] | None:
     try:
         estado = os.stat(ruta)
-    except FileNotFoundError:
+    except (FileNotFoundError, PermissionError):
         return None
     return (estado.st_mtime_ns, estado.st_size)
 
@@ -106,7 +155,11 @@ async def fotogramas_nuevos(
     ultima_version: tuple[int, int] | None = None
     while True:
         if _version_de(ruta) != ultima_version:
-            fotograma = leer_fotograma(ruta)
+            try:
+                fotograma = leer_fotograma(ruta)
+            except PreviewOcupado:
+                # El sink esta a mitad de `os.replace`: en la vuelta siguiente ya estara.
+                fotograma = None
             if fotograma is not None and fotograma.version != ultima_version:
                 ultima_version = fotograma.version
                 yield fotograma.datos

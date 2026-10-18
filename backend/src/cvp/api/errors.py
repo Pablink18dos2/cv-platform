@@ -12,7 +12,11 @@ Los codigos que existen:
 - `snapshot_not_found` (404): el proyecto no tiene todavia un fotograma en disco.
 - `invalid_range` (400): `from` > `to`, o una ventana de mas de 7 dias.
 - `validation_error` (422): un parametro que no pasa la validacion, con `details[].field`.
+- `snapshot_busy` (503): el sink esta reemplazando el fichero y no lo ha soltado en unos
+  reintentos; el cliente vuelve a pedirlo (`Retry-After: 1`).
 - `not_found`, `method_not_allowed`, `http_error`: los de la propia infraestructura HTTP.
+- `internal_error` (500): una excepcion sin manejar. No deberia salir nunca, y cuando
+  sale, sale con esta forma y no como un `text/plain` que el cliente no sabe leer.
 """
 
 from __future__ import annotations
@@ -95,7 +99,15 @@ def _campo_de(loc: tuple[Any, ...]) -> str:
 def registrar_manejadores(app: FastAPI) -> None:
     @app.exception_handler(ApiError)
     async def _api_error(_request: Request, exc: ApiError) -> JSONResponse:
-        return JSONResponse(status_code=exc.status_code, content=exc.cuerpo())
+        cabeceras = {"Retry-After": "1"} if exc.status_code == 503 else None
+        return JSONResponse(status_code=exc.status_code, content=exc.cuerpo(), headers=cabeceras)
+
+    @app.exception_handler(Exception)
+    async def _sin_manejar(_request: Request, exc: Exception) -> JSONResponse:
+        # Starlette lo registra en el log y, con `raise_server_exceptions` en el
+        # `TestClient`, lo vuelve a lanzar: aqui solo se le da la forma unica de error.
+        error = ApiError(500, "internal_error", f"{type(exc).__name__}: {exc}")
+        return JSONResponse(status_code=500, content=error.cuerpo())
 
     @app.exception_handler(RequestValidationError)
     async def _validacion(_request: Request, exc: RequestValidationError) -> JSONResponse:

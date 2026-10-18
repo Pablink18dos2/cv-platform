@@ -25,7 +25,12 @@ from fastapi.responses import StreamingResponse
 
 from cvp.api.deps import IdDeProyecto
 from cvp.api.errors import RESPUESTAS_DE_ERROR, ApiError, ErrorResponse
-from cvp.api.preview import fotogramas_nuevos, leer_fotograma, ruta_de_preview
+from cvp.api.preview import (
+    PreviewOcupado,
+    fotogramas_nuevos,
+    leer_fotograma_con_reintentos,
+    ruta_de_preview,
+)
 
 __all__ = ["FRONTERA", "router"]
 
@@ -49,15 +54,33 @@ def _sin_fotograma(project_id: str) -> ApiError:
     )
 
 
+def _ocupado(project_id: str) -> ApiError:
+    return ApiError(
+        503,
+        "snapshot_busy",
+        f"el worker esta escribiendo el fotograma de {project_id!r} ahora mismo; vuelve a pedirlo",
+    )
+
+
 @router.get(
     "/projects/{id}/snapshot.jpg",
     operation_id="get_snapshot",
     summary="El ultimo fotograma, como JPEG",
     response_class=Response,
-    responses={200: {"content": {"image/jpeg": {}}, "description": "El ultimo fotograma."}},
+    responses={
+        200: {"content": {"image/jpeg": {}}, "description": "El ultimo fotograma."},
+        503: {
+            "model": ErrorResponse,
+            "description": "`snapshot_busy`: el sink lo esta reemplazando; vuelve a pedirlo.",
+        },
+    },
 )
 def snapshot(id: IdDeProyecto, request: Request) -> Response:
-    fotograma = leer_fotograma(ruta_de_preview(id, base=request.app.state.settings.preview_dir))
+    ruta = ruta_de_preview(id, base=request.app.state.settings.preview_dir)
+    try:
+        fotograma = leer_fotograma_con_reintentos(ruta)
+    except PreviewOcupado:
+        raise _ocupado(id) from None
     if fotograma is None:
         raise _sin_fotograma(id)
     return Response(content=fotograma.datos, media_type="image/jpeg", headers=_SIN_CACHE)
@@ -90,9 +113,14 @@ async def _multipart(ruta: Path, intervalo_s: float) -> AsyncIterator[bytes]:
 def stream(id: IdDeProyecto, request: Request) -> StreamingResponse:
     ajustes = request.app.state.settings
     ruta = ruta_de_preview(id, base=ajustes.preview_dir)
-    if leer_fotograma(ruta) is None:
-        # Sin fotograma no hay nada que emitir todavia: 404 ahora, y el cliente reintenta.
-        raise _sin_fotograma(id)
+    try:
+        if leer_fotograma_con_reintentos(ruta) is None:
+            # Sin fotograma no hay nada que emitir todavia: 404 ahora, y el cliente reintenta.
+            raise _sin_fotograma(id)
+    except PreviewOcupado:
+        # El fichero existe y el sink lo esta reemplazando: el stream lo cogera en su
+        # primera vuelta. No hay motivo para negarle la conexion al cliente.
+        pass
     return StreamingResponse(
         _multipart(ruta, ajustes.stream_interval_s),
         media_type=f"multipart/x-mixed-replace; boundary={FRONTERA}",

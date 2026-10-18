@@ -169,3 +169,25 @@ class VigilanteDeFicheros:
     @property
     def sin_cerrar(self) -> list[Any]:
         return [f for f in self.abiertos if not f.closed]
+
+
+def read_bytes_que_falla(
+    monkeypatch: pytest.MonkeyPatch, veces: int, *, error: type[OSError] = PermissionError
+) -> list[int]:
+    """Parchea `Path.read_bytes` para que lance `error` las primeras `veces` llamadas.
+
+    Es la carrera de #27 vista desde el lector, reproducida de forma determinista como
+    hizo QA: en Windows, abrir el fichero mientras el sink hace `os.replace` es un
+    `PermissionError [Errno 13]`. Devuelve la lista donde se cuentan las llamadas.
+    """
+    original = Path.read_bytes
+    llamadas: list[int] = []
+
+    def falso(self: Path) -> bytes:
+        llamadas.append(len(llamadas) + 1)
+        if len(llamadas) <= veces:
+            raise error(13, "Permission denied", str(self))
+        return original(self)
+
+    monkeypatch.setattr(Path, "read_bytes", falso)
+    return llamadas

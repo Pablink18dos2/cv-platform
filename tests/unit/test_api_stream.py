@@ -21,7 +21,7 @@ from typing import Any
 
 import httpx
 import pytest
-from api_soporte import PROYECTO, Base, VigilanteDeFicheros
+from api_soporte import PROYECTO, Base, VigilanteDeFicheros, read_bytes_que_falla
 from fastapi.testclient import TestClient
 
 from cvp.api import crear_app
@@ -134,6 +134,49 @@ def test_si_el_fichero_desaparece_espera_y_sigue_cuando_vuelve(tmp_path: Path) -
     espera.entre_vueltas[5] = lambda: _escribir(ruta, b"tres", 3_000)
 
     assert _tres(ruta, espera) == [b"uno", b"dos", b"tres"]
+
+
+def test_si_el_sink_esta_reemplazando_el_fichero_el_stream_espera_a_la_vuelta_siguiente(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """La carrera que mato el MJPEG en la verificacion de QA (4 de 8 ejecuciones): en
+    Windows, abrir el fichero durante el `os.replace` del sink es un `PermissionError`.
+    Reproducida de forma determinista: `read_bytes` lanza una vez, y el generador no
+    muere; lo lee en la vuelta siguiente y sigue emitiendo."""
+    ruta = tmp_path / "p.jpg"
+    _escribir(ruta, b"uno", 1_000)
+    llamadas = read_bytes_que_falla(monkeypatch, 1)
+    espera = EsperaFalsa()
+    espera.entre_vueltas[3] = lambda: _escribir(ruta, b"dos", 2_000)
+    espera.entre_vueltas[5] = lambda: _escribir(ruta, b"tres", 3_000)
+
+    assert _tres(ruta, espera) == [b"uno", b"dos", b"tres"]
+    assert llamadas[:2] == [1, 2]  # la primera lectura fallo; la segunda vuelta la repitio
+    assert espera.vueltas == 5
+
+
+def test_un_permission_error_en_medio_del_stream_tampoco_lo_mata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ruta = tmp_path / "p.jpg"
+    _escribir(ruta, b"uno", 1_000)
+    original = Path.read_bytes
+    fallar_en: set[int] = {2, 3}  # la segunda y la tercera lectura chocan con el sink
+    llamadas: list[int] = []
+
+    def con_choques(self: Path) -> bytes:
+        llamadas.append(len(llamadas) + 1)
+        if len(llamadas) in fallar_en:
+            raise PermissionError(13, "Permission denied", str(self))
+        return original(self)
+
+    monkeypatch.setattr(Path, "read_bytes", con_choques)
+    espera = EsperaFalsa()
+    espera.entre_vueltas[1] = lambda: _escribir(ruta, b"dos", 2_000)
+    espera.entre_vueltas[4] = lambda: _escribir(ruta, b"tres", 3_000)
+
+    assert _tres(ruta, espera) == [b"uno", b"dos", b"tres"]
+    assert len(llamadas) == 5  # uno, choque, choque, dos, tres
 
 
 def test_entre_lecturas_no_queda_ningun_descriptor_abierto(

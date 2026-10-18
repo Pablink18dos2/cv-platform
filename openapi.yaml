@@ -353,6 +353,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: '`snapshot_busy`: el sink lo esta reemplazando; vuelve a pedirlo.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /api/v1/projects/{id}/stream.mjpg:
     get:
       tags:
