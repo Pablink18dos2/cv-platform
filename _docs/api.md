@@ -72,6 +72,8 @@ una ruta sin regenerarlo rompe CI en el mismo commit.
 | 404 | `snapshot_not_found` | el proyecto no tiene todavia un fotograma en disco |
 | 404 | `not_found` | la ruta no existe |
 | 422 | `validation_error` | un parametro no pasa la validacion; `details[].field` dice cual |
+| 500 | `internal_error` | una excepcion sin manejar; no deberia salir nunca |
+| 503 | `snapshot_busy` | el worker esta reemplazando el fotograma; `Retry-After: 1` |
 
 ## Los recursos
 
@@ -200,8 +202,17 @@ Van por timestamp descendente, `limit` por pagina (100 por defecto, 500 como max
 `before=<next_before de la anterior>`, y `next_before` es `null` cuando no hay mas. Dos
 vehiculos que cruzan en el mismo fotograma producen dos eventos con el **mismo timestamp**,
 y la pagina **nunca corta entre ellos**: si el ultimo de la pagina comparte timestamp con el
-siguiente, la pagina se alarga hasta incluirlos todos. Puede pasar de `limit` en unos pocos
-eventos, y a cambio recorrer las paginas no repite ni salta ninguno.
+siguiente, la pagina se alarga hasta incluirlos todos. A cambio, recorrer las paginas no
+repite ni salta ninguno, que es lo que un cursor por timestamp no puede garantizar de otra
+forma: con `<` el segundo evento del fotograma se perderia, y con `<=` se repetiria.
+
+**`limit` es el tamano de pagina, no un tope duro de elementos.** Con fotogramas reales la
+pagina se pasa en unos pocos eventos —los del ultimo fotograma—, pero el caso extremo esta
+medido: **600 eventos con el mismo timestamp y `limit=500` devuelven una sola pagina de
+600**, con `next_before` en ese timestamp y una segunda pagina vacia. Un cliente que
+reserve memoria o pinte filas contando con `limit` tiene que leer `events.length`, no
+`limit`. Y si en algun momento hiciera falta un tope duro, la solucion no es cortar por
+`limit` —eso reintroduce el evento perdido— sino un cursor compuesto `(timestamp, id)`.
 
 ### El fotograma
 
@@ -216,6 +227,25 @@ Los dos **leen el fichero entero y lo cierran antes de responder**. Es la mitiga
 Windows, el `os.replace` del sink falla si alguien tiene el fichero abierto, y un lector que lo
 mantuviera abierto mientras transmite haria fallar al worker una de cada cuatro escrituras.
 Un cliente nuevo que sirva este fichero por otro camino tiene que hacer lo mismo.
+
+**La carrera sigue existiendo en los dos sentidos, y por eso ninguna de las dos rutas la
+trata como un error.** Leer entero reduce la ventana pero no la cierra: con un lector
+conectado siguen fallando algunos `os.replace` del sink —entre 0 y 8 % de las escrituras
+segun la carga de la maquina (QA midio 2-12 de 150 a 5 fps; en una maquina mas descargada,
+0-2 de 150)—. El worker los cuenta como `sink_errors` y sigue: se pierde **ese fotograma**,
+no la ejecucion, y un contador de `sink_errors` que no sea cero con el dashboard abierto no
+es necesariamente un disco lleno. Del otro lado, abrir el fichero justo cuando el sink lo
+reemplaza falla, y en Windows **no** es un `FileNotFoundError` sino un `PermissionError`;
+antes de tratarlo, eso **mataba el MJPEG**: medido en 150 escrituras por ejecucion, 2 de 8
+muertes a 5 fps y 3 de 8 a 20 fps (QA, en una maquina mas cargada: 4 de 8 y 3 de 3), y un
+500 en `snapshot.jpg`. Tratandolo, 0 de 8 y 0 de 8. Ahora:
+
+- **`stream.mjpg`** lo trata como "todavia no": espera a la vuelta siguiente (250 ms) y sigue
+  emitiendo. El cliente no se entera.
+- **`snapshot.jpg`** reintenta unas pocas veces en la misma peticion (5 x 20 ms, porque la
+  ventana del `os.replace` es de microsegundos) y, si el fichero sigue ocupado, responde
+  **503 `snapshot_busy` con `Retry-After: 1`**. Un cliente que lo recibe vuelve a pedirlo; no
+  es un fallo del servidor ni un proyecto sin fotograma.
 
 ## Anadir un endpoint
 

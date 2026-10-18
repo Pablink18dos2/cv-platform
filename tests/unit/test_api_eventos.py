@@ -106,6 +106,22 @@ def test_la_pagina_no_corta_nunca_un_timestamp_compartido(base: Base, cliente: T
     assert segunda["next_before"] is None
 
 
+def test_limit_es_el_tamano_de_pagina_y_no_un_tope_duro(base: Base, cliente: TestClient) -> None:
+    """El caso extremo del borde anterior, que `api.md` documenta: 600 eventos con el
+    **mismo** timestamp y `limit=500` salen en una sola pagina de 600, porque cortarla
+    perderia o repetiria eventos. Un cliente tiene que leer `events.length`, no `limit`."""
+    base.escribir_eventos(*(evento(5, attributes={"i": i}) for i in range(600)))
+
+    primera = pagina(cliente, limit=500)
+    assert len(primera["events"]) == 600
+    assert {e["attributes"]["i"] for e in primera["events"]} == set(range(600))
+    assert primera["next_before"] == "2026-08-24T14:20:05Z"
+
+    segunda = pagina(cliente, limit=500, before=primera["next_before"])
+    assert segunda["events"] == []
+    assert segunda["next_before"] is None
+
+
 def test_una_pagina_exacta_no_anuncia_pagina_siguiente(base: Base, cliente: TestClient) -> None:
     base.escribir_eventos(evento(1), evento(2), evento(3))
     respuesta = pagina(cliente, limit=3)
