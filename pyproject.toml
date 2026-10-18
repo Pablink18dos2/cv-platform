@@ -29,6 +29,15 @@ dependencies = [
     # Arrastra SQLAlchemy, que es quien habla con las dos bases. Ni `cvp.core` ni
     # `cvp.pipeline.config` lo importan, y los dos tests de aislamiento lo comprueban.
     "sqlmodel>=0.0.22",
+    # Starlette entra por FastAPI, pero la version importa para los tests: desde la 1.6 su
+    # `TestClient` prefiere `httpx2` y avisa con `httpx`, y la version que **exija** httpx2
+    # romperia de golpe los 89 tests de la API. Se fija el techo aqui, y no se silencia el
+    # problema con el filtro de warnings (que sigue abajo, para que la suite no haga ruido):
+    # el dia que haga falta Starlette 2, hay que pedir `httpx2` como dependencia de
+    # desarrollo —#12 autorizo `httpx`, no `httpx2`— y cambiar el import del `TestClient`.
+    # Es una decision con coste, y el techo la pone sobre la mesa en vez de dejarla al azar
+    # de un `uv sync`.
+    "starlette<2",
     "supervision>=0.25",
     "trackers>=0.1",
     "ultralytics>=8.3",
@@ -71,8 +80,10 @@ dev = [
 testpaths = ["tests"]
 addopts = "-q --strict-markers -m 'not network'"
 filterwarnings = [
-    # Starlette >= 1.6 prefiere `httpx2` para su `TestClient` y avisa si encuentra `httpx`.
-    # #12 autoriza `httpx`, que funciona; el aviso se silencia hasta que se decida el cambio.
+    # Starlette >= 1.6 prefiere `httpx2` para su `TestClient` y avisa si encuentra `httpx`,
+    # que es lo que #12 autorizo y lo que funciona. El aviso no aporta nada en cada
+    # ejecucion y el riesgo real —que una version deje de aceptar `httpx`— lo cubre el
+    # techo `starlette<2` de las dependencias, no este filtro.
     "ignore:Using `httpx` with `starlette.testclient` is deprecated",
 ]
 markers = [
