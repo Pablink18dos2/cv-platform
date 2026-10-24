@@ -68,6 +68,14 @@ describe("kpis y direcciones", () => {
     expect(kpisOf(latest).perMinute).toBe(2);
   });
 
+  it("sin cruces pero con vehicles_in_scene el proyecto cuenta tráfico: 0, no null (#36)", () => {
+    const sinCruces = [
+      { minute: "2026-08-24T14:05:00Z", name: "vehicles_in_scene", mean_value: 4, sum_value: 0, labels: {} },
+    ] as LatestPoint[];
+    expect(kpisOf(sinCruces).perMinute).toBe(0);
+    expect(kpisOf([]).perMinute).toBeNull();
+  });
+
   it("los sentidos salen de latest aunque no cruzaran en la ventana", () => {
     expect(directionsOf(latest)).toEqual(["norte", "sur"]);
   });

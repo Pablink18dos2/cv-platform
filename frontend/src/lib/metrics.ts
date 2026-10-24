@@ -68,9 +68,11 @@ export function kpisOf(latest: LatestPoint[]): Kpis {
   const flow = latest.filter((p) => p.name === "crossings");
   // `latest` trae el último minuto de cada serie: una dirección sin cruces recientes trae uno viejo.
   const lastMinute = latest.reduce((m, p) => (p.minute > m ? p.minute : m), "");
+  // `vehicles_in_scene` la emite el analizador de tráfico aunque no haya cruces: sin cruces es 0, no "no cuenta".
+  const countsTraffic = flow.length > 0 || latest.some((p) => p.name === "vehicles_in_scene");
   return {
     parking: free != null && total != null ? { free: Math.round(free), total: Math.round(total) } : null,
-    perMinute: flow.length
+    perMinute: countsTraffic
       ? flow.filter((p) => p.minute === lastMinute).reduce((sum, p) => sum + p.sum_value, 0)
       : null,
   };
