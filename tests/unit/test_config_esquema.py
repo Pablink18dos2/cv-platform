@@ -71,7 +71,7 @@ def test_config_schemas_es_dato_publico_por_bloque_y_por_nombre() -> None:
     assert set(CONFIG_SCHEMAS["source"]) == {"file", "youtube_live", "rtsp", "webcam"}
     assert set(CONFIG_SCHEMAS["detector"]) == {"yolo"}
     assert set(CONFIG_SCHEMAS["tracker"]) == {"bytetrack"}
-    assert set(CONFIG_SCHEMAS["analyzer"]) == {"traffic_flow", "parking_occupancy"}
+    assert set(CONFIG_SCHEMAS["analyzer"]) == {"traffic_flow", "parking_occupancy", "framing_guard"}
     assert set(CONFIG_SCHEMAS["sink"]) == {"sqlite", "preview", "jsonl"}
     for esquemas in CONFIG_SCHEMAS.values():
         for modelo in esquemas.values():
@@ -454,3 +454,11 @@ def test_el_jsonl_necesita_una_ruta(tmp_path: Path) -> None:
 def test_repetir_el_mismo_tipo_de_sink_es_un_error(tmp_path: Path) -> None:
     (problema,) = problemas(tmp_path, sinks=[{"type": "sqlite"}, {"type": "sqlite"}])
     assert problema.startswith("sinks[1].type: ya hay un sink 'sqlite' en sinks[0]")
+
+
+def test_framing_guard_y_sus_valores_por_defecto(tmp_path: Path) -> None:
+    (tmp_path / "ref.jpg").write_bytes(b"")
+    config = carga(tmp_path, analyzers=[{"type": "framing_guard", "reference_image": "ref.jpg"}])
+    guardia = config.analyzers[0]
+    assert guardia.reference_image == (tmp_path / "ref.jpg").resolve()
+    assert (guardia.min_similarity, guardia.lost_after_s, guardia.restored_after_s) == (0.6, 30, 30)

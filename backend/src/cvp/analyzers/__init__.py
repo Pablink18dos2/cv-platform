@@ -19,7 +19,8 @@ la confirmacion en fotogramas.
 
 from __future__ import annotations
 
+from cvp.analyzers.framing import FramingGuardAnalyzer
 from cvp.analyzers.parking import ParkingOccupancyAnalyzer
 from cvp.analyzers.traffic import TrafficFlowAnalyzer
 
-__all__ = ["ParkingOccupancyAnalyzer", "TrafficFlowAnalyzer"]
+__all__ = ["FramingGuardAnalyzer", "ParkingOccupancyAnalyzer", "TrafficFlowAnalyzer"]

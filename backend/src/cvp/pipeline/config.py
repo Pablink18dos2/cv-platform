@@ -57,6 +57,7 @@ __all__ = [
     "ByteTrackTracker",
     "DetectorConfig",
     "FileSource",
+    "FramingGuardAnalyzer",
     "Hysteresis",
     "JsonlSink",
     "Line",
@@ -625,6 +626,21 @@ class ParkingOccupancyAnalyzer(_AnalyzerBase):
     hysteresis: Hysteresis = Field(default_factory=Hysteresis)
 
 
+class FramingGuardAnalyzer(_AnalyzerBase):
+    """Avisa de que la camara se ha movido comparando con una imagen de referencia (#34).
+
+    `reference_image` es el fotograma con el que se dibujaron las zonas; actualizarlo tras
+    un cambio aceptado es cambiar el fichero, no el codigo. `min_similarity` es el umbral de
+    la puntuacion 0..1 y los dos tiempos son la histeresis en segundos de video.
+    """
+
+    type: Literal["framing_guard"]
+    reference_image: _RutaEntrada
+    min_similarity: Annotated[float, Field(gt=0, le=1)] = 0.6
+    lost_after_s: Annotated[float, Field(gt=0)] = 30.0
+    restored_after_s: Annotated[float, Field(gt=0)] = 30.0
+
+
 # --------------------------------------------------------------------------------------
 # `sinks`
 # --------------------------------------------------------------------------------------
@@ -682,7 +698,7 @@ SourceConfig = Annotated[
 DetectorConfig = Annotated[YoloDetector, Field(discriminator="type")]
 TrackerConfig = Annotated[ByteTrackTracker, Field(discriminator="type")]
 AnalyzerConfig = Annotated[
-    TrafficFlowAnalyzer | ParkingOccupancyAnalyzer,
+    TrafficFlowAnalyzer | ParkingOccupancyAnalyzer | FramingGuardAnalyzer,
     Field(discriminator="type"),
 ]
 SinkConfig = Annotated[SqliteSink | PreviewSink | JsonlSink, Field(discriminator="type")]
@@ -706,6 +722,7 @@ CONFIG_SCHEMAS: Mapping[str, Mapping[str, type[BaseModel]]] = MappingProxyType(
         "tracker": MappingProxyType({"bytetrack": ByteTrackTracker}),
         "analyzer": MappingProxyType(
             {
+                "framing_guard": FramingGuardAnalyzer,
                 "parking_occupancy": ParkingOccupancyAnalyzer,
                 "traffic_flow": TrafficFlowAnalyzer,
             }

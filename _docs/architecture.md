@@ -163,6 +163,9 @@ siguientes:
 - **Los tests van primero y son sintéticos**: un caso por fallo posible, con trayectorias de
   `Track` escritas a mano; el vídeo real se queda en un único test `slow` que comprueba que lo
   que sale no es un artefacto.
+- **No todo analizador mide la escena**: `framing_guard` (#34) ignora tracks y detecciones y compara
+  cada fotograma con una imagen de referencia para avisar de que la cámara se ha movido
+  (`framing_score`, `framing_lost`, `framing_restored`); no suprime a los demás.
 
 ### 5. `Sink` — dónde acaba el resultado
 
