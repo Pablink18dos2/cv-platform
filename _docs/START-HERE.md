@@ -351,7 +351,7 @@ _docs/
   design-system.md              se carga solo en tareas de UI
   api.md                        se carga solo en tareas de API
   ai-usage-report.md            entregable del curso
-  checklist-proyecto-final.md   los 14 criterios de evaluación
+  checklist-proyecto-final.md   los 12 criterios de evaluación (24 puntos)
   team/pm.md                    rol Product Manager
   team/software-engineer.md     rol Software Engineer
   team/qa-engineer.md           rol QA Engineer
