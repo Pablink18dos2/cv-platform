@@ -78,5 +78,7 @@ analyzers:
     restored_after_s: 30
 
 sinks:
+  # En Docker (#15) DATABASE_URL apunta a Postgres; en local no esta definida y manda SQLite.
   - type: sqlite
+    url: "${DATABASE_URL:-sqlite:///data/cvp.sqlite3}"
   - type: preview

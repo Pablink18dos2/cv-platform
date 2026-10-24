@@ -1,0 +1,89 @@
+# CV Platform en contenedores (#15): `docker compose up --build`.
+#
+#   db      Postgres, con su volumen.
+#   api     la API de lectura (cvp api).
+#   worker  el pipeline de UN proyecto (cvp run), el que diga PROJECT.
+#   web     nginx: sirve el dashboard compilado y reenvia /api a la API.
+#
+# api y worker usan la misma imagen; solo cambia el comando.
+
+x-backend: &backend
+  build:
+    context: .
+    dockerfile: docker/backend.Dockerfile
+  image: cv-platform-backend
+  environment: &backend-env
+    # `+psycopg`: sin el, SQLAlchemy buscaria psycopg2, que no esta instalado.
+    DATABASE_URL: postgresql+psycopg://cvp:${POSTGRES_PASSWORD:-cvp}@db:5432/cvp
+    CVP_LOG_LEVEL: ${CVP_LOG_LEVEL:-INFO}
+  volumes:
+    # Los proyectos y el video de prueba salen del repo, para editar un YAML sin reconstruir.
+    - ./projects:/app/projects:ro
+    - ./tests/fixtures:/app/tests/fixtures:ro
+    - data:/app/data
+    - models:/app/models
+
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: cvp
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cvp}
+      POSTGRES_DB: cvp
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cvp -d cvp"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  api:
+    <<: *backend
+    command: ["cvp", "api"]
+    environment:
+      <<: *backend-env
+      CVP_API_HOST: 0.0.0.0
+      CVP_API_PORT: "8000"
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/projects')
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  worker:
+    <<: *backend
+    # Un worker, un proyecto. Para otro: `PROJECT=projects/00-demo docker compose up`.
+    command: ["cvp", "run", "${PROJECT:-projects/01-parking-trafico}"]
+    depends_on:
+      # La API es quien crea el esquema en Postgres al arrancar; esperarla evita que api y
+      # worker lo creen a la vez.
+      api:
+        condition: service_healthy
+    restart: on-failure
+
+  web:
+    build:
+      context: .
+      dockerfile: docker/web.Dockerfile
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  data:
+  models:
+  pgdata:

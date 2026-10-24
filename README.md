@@ -41,12 +41,57 @@ uv run ruff check .     # lint
 uv run cvp --version    # el CLI responde
 ```
 
+## Con Docker
+
+Requisitos: Docker con Compose v2. Nada más: ni Python, ni Node, ni ffmpeg en la máquina.
+
+```bash
+docker compose up --build          # por defecto corre projects/01-parking-trafico
+```
+
+El primer `--build` tarda unos minutos (torch en su versión CPU pesa ~180 MB, no los ~2,5 GB
+de CUDA) y los siguientes reutilizan la caché. Con el proyecto de demostración, que reproduce un
+vídeo del repo y no necesita red para la fuente:
+
+```bash
+PROJECT=projects/00-demo docker compose up --build             # bash
+$env:PROJECT = "projects/00-demo"; docker compose up --build   # PowerShell
+```
+
+Cuando el worker lleva unos segundos escribiendo, el dashboard está en
+<http://localhost:8080> y la API (con su `/docs`) en <http://localhost:8000>.
+
+| Servicio | Qué es |
+|---|---|
+| `db` | Postgres 17. El esquema lo crea la API al arrancar |
+| `api` | `cvp api`, la API de lectura |
+| `worker` | `cvp run $PROJECT`: un worker, un proyecto |
+| `web` | nginx: sirve el dashboard compilado y reenvía `/api` a la API |
+
+`api` y `worker` comparten una sola imagen. Los volúmenes son `data` (el último fotograma
+anotado de cada proyecto), `models` (los pesos de YOLO, que el worker descarga la primera vez:
+esa primera vez sí hace falta red) y `pgdata` (la base). `projects/` se monta desde el repo,
+así que editar un `project.yaml` y reiniciar el worker basta, sin reconstruir.
+
+Variables, todas opcionales: `PROJECT` (por defecto `projects/01-parking-trafico`), `WEB_PORT`
+(8080), `API_PORT` (8000), `POSTGRES_PASSWORD` (`cvp`; la base no se publica fuera de la red de
+Compose) y `CVP_LOG_LEVEL`. `DATABASE_URL` la fija Compose hacia Postgres (con el driver
+`postgresql+psycopg://`); los `project.yaml` la leen en el sink `sqlite` y, si no está definida,
+caen a SQLite como en local.
+
+```bash
+docker compose logs -f worker      # la línea de salud del pipeline
+docker compose down                # borra los contenedores; los volúmenes se conservan
+docker compose down -v             # además borra datos, pesos y base
+```
+
 ## Estructura
 
 ```
 backend/src/cvp/   el paquete: core, sources, detectors, trackers, analyzers, sinks, pipeline, api
 projects/          un directorio por proyecto: project.yaml + zones.json
 frontend/          dashboard React compartido por todos los proyectos
+docker/            Dockerfiles del backend y del frontend y la config de nginx (ver compose.yaml)
 tests/             unit (rápidos) · component (pipeline con dobles) · integration (modelo real)
 _docs/             especificación, arquitectura y guías de trabajo
 ```

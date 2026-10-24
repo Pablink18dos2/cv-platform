@@ -38,6 +38,11 @@ dependencies = [
     # Es una decision con coste, y el techo la pone sobre la mesa en vez de dejarla al azar
     # de un `uv sync`.
     "starlette<2",
+    # Driver de Postgres para el entorno contenedorizado (#15): `DATABASE_URL` pasa a ser
+    # `postgresql+psycopg://...` y SQLAlchemy lo carga solo si el driver esta instalado. Con
+    # `[binary]` el wheel trae libpq y la imagen no necesita compilar nada. En local sigue
+    # mandando SQLite y este paquete no se importa.
+    "psycopg[binary]>=3.2",
     "supervision>=0.25",
     "trackers>=0.1",
     "ultralytics>=8.3",
