@@ -1,112 +1,180 @@
 # CV Platform
 
-Plataforma local de visión por computador para montar prototipos de análisis de vídeo sin coste
-de cloud. Un **proyecto** conecta una fuente de vídeo con un modelo de detección y uno o varios
-analizadores de negocio, y todos los proyectos comparten el mismo frontal.
+A local computer-vision platform for building video-analysis prototypes at zero cloud cost.
+A **project** connects a video source to a detection model and one or more business analyzers,
+and every project shares the same web front end.
 
-Toda la inferencia corre en local. No hace falta GPU ni cuenta en ningún servicio de pago.
+All inference runs locally. No GPU and no paid service account are needed.
 
-## El problema
+## Course project
 
-Analizar vídeo en directo (una calle, un aparcamiento, una cámara de proceso) normalmente acaba
-en un script de usar y tirar por cada caso: uno para contar coches, otro para mirar plazas
-libres, cada uno con su propia forma de leer el vídeo y de guardar resultados. Cuando llega el
-tercer caso ya no se reutiliza nada.
+This is the final project for **AI Dev Tools Zoomcamp 2026** (DataTalksClub).
 
-Aquí la pieza que se reutiliza es la **plataforma**: connectors, modelos, analizadores y sinks
-son bloques intercambiables detrás de un contrato. Añadir un caso nuevo es escribir un
-analizador y un YAML, no un proyecto nuevo.
+- Task tracker: the GitHub issues of this repository. Each issue has acceptance criteria and is
+  the source of truth for what to build.
+- Agent roles (orchestrator, PM, engineer, QA) and the task lifecycle: [`_docs/process.md`](_docs/process.md).
+- Course evaluation checklist with the current status of each criterion:
+  [`_docs/checklist-proyecto-final.md`](_docs/checklist-proyecto-final.md).
 
-## Qué hace
+> Note: the detailed documents in `_docs/` (architecture, API, performance, testing guidelines,
+> design system, ...) are written in Spanish. The key documents are in English: this README,
+> [`AGENTS.md`](AGENTS.md), [`_docs/plan.md`](_docs/plan.md), [`_docs/process.md`](_docs/process.md)
+> and the course checklist.
 
-- Conecta fuentes de vídeo intercambiables: fichero, directo de YouTube, RTSP, webcam.
-- Detecta objetos con YOLO11 y les da identidad estable con seguimiento multiobjeto.
-- Ejecuta analizadores sobre esas detecciones. Los dos primeros: **flujo de tráfico**
-  (cruces de línea con sentido) y **ocupación de aparcamiento** (plazas libres por zona).
-- Guarda eventos y métricas agregadas por minuto.
-- Sirve un dashboard web con la lista de proyectos y, por cada uno, el vídeo anotado, sus KPIs
-  y sus series temporales.
+## The problem
 
-Lo que **no** hace está en [`_docs/plan.md`](_docs/plan.md#non-goals), y es igual de importante.
-En resumen: ni matrículas, ni identificación de personas, ni entrenamiento de modelos.
+Analyzing live video (a street, a parking lot, a process camera) usually ends up as a throwaway
+script per use case: one to count cars, another to look for free parking spaces, each with its
+own way of reading the video and storing results. By the third case nothing is reused.
 
-## Arranque rápido
+Here the reusable piece is the **platform**: connectors, models, analyzers and sinks are
+interchangeable blocks behind a contract. Adding a new use case means writing an analyzer and a
+YAML file, not a new project.
 
-Requisitos: Python 3.13, [uv](https://docs.astral.sh/uv/) y ffmpeg en el PATH.
+## What it does
 
-```bash
-uv sync                 # instala dependencias en .venv
-uv run pytest           # la suite completa
-uv run ruff check .     # lint
-uv run cvp --version    # el CLI responde
+- Connects interchangeable video sources: file, YouTube live stream, RTSP, webcam.
+- Detects objects with YOLO11 and gives them stable identities with multi-object tracking.
+- Runs analyzers on those detections. The first two are **traffic flow** (directional line
+  crossings) and **parking occupancy** (free spaces per zone).
+- Stores events and per-minute aggregated metrics.
+- Serves a web dashboard with the list of projects and, for each one, the annotated video, its
+  KPIs and its time series.
+
+What it does **not** do is listed in [`_docs/plan.md`](_docs/plan.md#non-goals) and is just as
+important. In short: no license plates, no identification of people, no model training.
+
+## Architecture
+
+Two separate processes, on purpose:
+
+```
+Source -> Detector -> Tracker -> Analyzers -> Sinks -> SQLite / Postgres
+(connector) (YOLO11)  (ByteTrack)                  \-> last annotated frame (JPEG on disk)
+                                                          |
+                                         FastAPI (read-only) -> React dashboard
 ```
 
-## Con Docker
+- **Worker** (`cvp run <project>`): one per project. Runs the whole pipeline above and is the
+  only CPU-heavy process.
+- **API** (`cvp api`): read-only over the database and the last-frame file. It loads no models.
+- **Blocks**: `VideoSource`, `Detector`, `Tracker`, `Analyzer` and `Sink` are each a `Protocol`
+  in `cvp.core`; implementations are registered by name and blocks talk to each other only
+  through those contracts. A project is a `project.yaml` (plus a `zones.json` with the polygons).
+- **Stack**: Python 3.13 + uv, ultralytics (YOLO11) with ByteTrack, supervision, OpenCV +
+  yt-dlp + ffmpeg, FastAPI, SQLModel (SQLite locally, Postgres in Docker), React + Vite +
+  Tailwind. Rationale and rejected alternatives: [`_docs/plan.md`](_docs/plan.md#tech-stack).
 
-Requisitos: Docker con Compose v2. Nada más: ni Python, ni Node, ni ffmpeg en la máquina.
+Details of each block and its contract: [`_docs/architecture.md`](_docs/architecture.md) (Spanish).
+
+## Quick start
+
+### With Docker (one command)
+
+Requirements: Docker with Compose v2. Nothing else: no Python, Node or ffmpeg on the machine.
 
 ```bash
-docker compose up --build          # por defecto corre projects/01-parking-trafico
+docker compose up --build          # runs projects/01-parking-trafico by default
 ```
 
-El primer `--build` tarda unos minutos (torch en su versión CPU pesa ~180 MB, no los ~2,5 GB
-de CUDA) y los siguientes reutilizan la caché. Con el proyecto de demostración, que reproduce un
-vídeo del repo y no necesita red para la fuente:
+The first `--build` takes a few minutes (CPU-only torch is ~180 MB instead of ~2.5 GB for
+CUDA); later runs reuse the cache. To use the demo project, which plays a video stored in the
+repo and needs no network for the source:
 
 ```bash
 PROJECT=projects/00-demo docker compose up --build             # bash
 $env:PROJECT = "projects/00-demo"; docker compose up --build   # PowerShell
 ```
 
-Cuando el worker lleva unos segundos escribiendo, el dashboard está en
-<http://localhost:8080> y la API (con su `/docs`) en <http://localhost:8000>.
+Once the worker has been writing for a few seconds, the dashboard is at
+<http://localhost:8080> and the API (with its `/docs`) at <http://localhost:8000>.
 
-| Servicio | Qué es |
+| Service | What it is |
 |---|---|
-| `db` | Postgres 17. El esquema lo crea la API al arrancar |
-| `api` | `cvp api`, la API de lectura |
-| `worker` | `cvp run $PROJECT`: un worker, un proyecto |
-| `web` | nginx: sirve el dashboard compilado y reenvía `/api` a la API |
+| `db` | Postgres 17. The API creates the schema on startup |
+| `api` | `cvp api`, the read-only API |
+| `worker` | `cvp run $PROJECT`: one worker, one project |
+| `web` | nginx: serves the built dashboard and proxies `/api` to the API |
 
-`api` y `worker` comparten una sola imagen. Los volúmenes son `data` (el último fotograma
-anotado de cada proyecto), `models` (los pesos de YOLO, que el worker descarga la primera vez:
-esa primera vez sí hace falta red) y `pgdata` (la base). `projects/` se monta desde el repo,
-así que editar un `project.yaml` y reiniciar el worker basta, sin reconstruir.
+`api` and `worker` share one image. Volumes are `data` (the last annotated frame of each
+project), `models` (the YOLO weights, which the worker downloads on first use: that first time
+does need network access) and `pgdata` (the database). `projects/` is mounted from the repo, so
+editing a `project.yaml` and restarting the worker is enough, no rebuild.
 
-Variables, todas opcionales: `PROJECT` (por defecto `projects/01-parking-trafico`), `WEB_PORT`
-(8080), `API_PORT` (8000), `POSTGRES_PASSWORD` (`cvp`; la base no se publica fuera de la red de
-Compose) y `CVP_LOG_LEVEL`. `DATABASE_URL` la fija Compose hacia Postgres (con el driver
-`postgresql+psycopg://`); los `project.yaml` la leen en el sink `sqlite` y, si no está definida,
-caen a SQLite como en local.
+Variables, all optional: `PROJECT` (default `projects/01-parking-trafico`), `WEB_PORT` (8080),
+`API_PORT` (8000), `POSTGRES_PASSWORD` (`cvp`; the database is not published outside the
+Compose network) and `CVP_LOG_LEVEL`. Compose sets `DATABASE_URL` to point at Postgres (with the
+`postgresql+psycopg://` driver); the `project.yaml` files read it in the `sqlite` sink and fall
+back to SQLite when it is undefined, as in local runs.
 
 ```bash
-docker compose logs -f worker      # la línea de salud del pipeline
-docker compose down                # borra los contenedores; los volúmenes se conservan
-docker compose down -v             # además borra datos, pesos y base
+docker compose logs -f worker      # the pipeline health line
+docker compose down                # removes the containers; volumes are kept
+docker compose down -v             # also removes data, weights and database
 ```
 
-## Estructura
+### Locally
+
+Requirements: Python 3.13, [uv](https://docs.astral.sh/uv/), ffmpeg on the PATH and, for the
+dashboard, Node.
+
+```bash
+uv sync                                          # install dependencies into .venv
+uv run cvp --version                             # the CLI responds
+uv run cvp run projects/00-demo --max-frames 150 # worker: process the demo video (SQLite sink)
+uv run cvp api                                   # read-only API on http://localhost:8000
+cd frontend && npm ci && npm run dev             # dashboard on http://localhost:5173
+```
+
+The dashboard origin must be listed in `CVP_CORS_ORIGINS`; see `frontend/README.md` (Spanish).
+
+## Tests
+
+One command runs the whole backend suite:
+
+```bash
+uv run pytest
+```
+
+Tests marked `network` are excluded by default (they reach the internet). CI runs the fast
+subset, which needs neither network nor model weights, plus lint and the frontend tests:
+
+```bash
+uv run pytest -m "not slow and not network"
+uv run ruff check . && uv run ruff format --check .      # lint and format
+cd frontend && npm test                                   # frontend tests (Vitest)
+```
+
+Tests are split into `unit` (fast), `component` (pipeline with test doubles) and
+`integration` (real model). See [`_docs/testing-guidelines.md`](_docs/testing-guidelines.md)
+(Spanish) for what is tested and how.
+
+## Project layout
 
 ```
-backend/src/cvp/   el paquete: core, sources, detectors, trackers, analyzers, sinks, pipeline, api
-projects/          un directorio por proyecto: project.yaml + zones.json
-frontend/          dashboard React compartido por todos los proyectos
-docker/            Dockerfiles del backend y del frontend y la config de nginx (ver compose.yaml)
-tests/             unit (rápidos) · component (pipeline con dobles) · integration (modelo real)
-_docs/             especificación, arquitectura y guías de trabajo
+backend/src/cvp/   the package: core, sources, detectors, trackers, analyzers, sinks, pipeline, api
+projects/          one directory per project: project.yaml + zones.json
+frontend/          React dashboard shared by all projects
+docker/            backend and frontend Dockerfiles and the nginx config (see compose.yaml)
+tests/             unit (fast) / component (pipeline with doubles) / integration (real model)
+_docs/             specification, architecture and working guides
 ```
 
-## Documentación
+## Documentation
 
-| Documento | Para qué |
-|---|---|
-| [`_docs/plan.md`](_docs/plan.md) | Qué se construye, para quién, y qué queda fuera |
-| [`_docs/architecture.md`](_docs/architecture.md) | Los bloques, sus contratos y cómo se añade uno nuevo |
-| [`_docs/process.md`](_docs/process.md) | Cómo se organiza el trabajo |
-| [`_docs/testing-guidelines.md`](_docs/testing-guidelines.md) | Qué se testea y cómo |
-| [`AGENTS.md`](AGENTS.md) | Contexto durable para agentes de código |
+| Document | Purpose | Language |
+|---|---|---|
+| [`_docs/plan.md`](_docs/plan.md) | Product spec: what is built, for whom, and what is out of scope | English |
+| [`_docs/process.md`](_docs/process.md) | How work is organized: agent roles and task lifecycle | English |
+| [`AGENTS.md`](AGENTS.md) | Durable context for coding agents | English |
+| [`_docs/checklist-proyecto-final.md`](_docs/checklist-proyecto-final.md) | Course evaluation checklist and current status | English |
+| [`_docs/architecture.md`](_docs/architecture.md) | The blocks, their contracts and how to add a new one | Spanish |
+| [`_docs/api.md`](_docs/api.md) | The read-only API | Spanish |
+| [`_docs/testing-guidelines.md`](_docs/testing-guidelines.md) | What is tested and how | Spanish |
+| [`_docs/design-system.md`](_docs/design-system.md) | UI design system | Spanish |
+| [`_docs/rendimiento.md`](_docs/rendimiento.md) | Performance measurements | Spanish |
 
-## Estado
+## Status
 
-En construcción. El backlog está en los issues de GitHub; el histórico inicial, en
+Under construction. The backlog is in the GitHub issues; the initial history is in
 [`_docs/tasks.md`](_docs/tasks.md).

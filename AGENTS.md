@@ -1,17 +1,17 @@
 # CV Platform
 
-Plataforma local de visión por computador. Un **proyecto** conecta una fuente de vídeo
-(connector) con un modelo de detección y uno o varios analizadores, y todos comparten el mismo
-frontal web. Toda la inferencia corre en local, sin GPU y sin servicios de pago.
+A local computer-vision platform. A **project** connects a video source (connector) to a
+detection model and one or more analyzers, and all projects share the same web front end.
+All inference runs locally, with no GPU and no paid services.
 
 ## Commands
 
-- `uv sync` - instala dependencias
-- `uv run pytest` - suite completa (excluye los tests marcados `network`)
-- `uv run pytest tests/unit/test_smoke.py` - un solo fichero
-- `uv run pytest -m "not slow and not network"` - solo los rápidos, es lo que corre CI
-- `uv run ruff check .` y `uv run ruff format .` - lint y formato
-- `uv run cvp --version` - el CLI
+- `uv sync` - install dependencies
+- `uv run pytest` - the whole suite (excludes tests marked `network`)
+- `uv run pytest tests/unit/test_smoke.py` - one file
+- `uv run pytest -m "not slow and not network"` - only the fast ones, which is what CI runs
+- `uv run ruff check .` and `uv run ruff format .` - lint and format
+- `uv run cvp --version` - the CLI
 
 ## Rules
 
@@ -22,26 +22,28 @@ frontal web. Toda la inferencia corre en local, sin GPU y sin servicios de pago.
 - Do not modify CI/CD, secrets, or deployment configuration without asking.
 - Do not close GitHub issues. Only the orchestrator closes issues.
 
-### Reglas propias de este proyecto
+### Project-specific rules
 
-- **Los bloques se comunican solo por los contratos de `cvp.core`.** Un analizador no sabe de
-  qué fuente vino el fotograma ni qué modelo lo detectó. Si para añadir algo hay que tocar el
-  pipeline, el diseño está roto: arregla el diseño.
-- **Nada del formato de una librería externa sale de su adaptador.** Los objetos de ultralytics
-  se convierten a `Detection` dentro de `detectors/`, y ahí se quedan.
-- **Ningún test de la suite por defecto toca la red ni descarga pesos.** Lo que necesite
-  internet va marcado `@pytest.mark.network`; lo que cargue un modelo real, `@pytest.mark.slow`.
-- **Nada de `datetime.now()` en lógica testeable.** El tiempo se inyecta, para poder probar la
-  histéresis y las agregaciones con un reloj falso.
-- **No se guardan matrículas, caras ni recortes de personas.** Es un no-goal explícito del plan.
-- Los pesos de los modelos van a `models/` y no se commitean.
+- **Blocks communicate only through the contracts in `cvp.core`.** An analyzer does not know
+  which source a frame came from or which model detected it. If adding something requires
+  touching the pipeline, the design is broken: fix the design.
+- **Nothing in an external library's format leaves its adapter.** ultralytics objects are
+  converted to `Detection` inside `detectors/` and stay there.
+- **No test in the default suite touches the network or downloads weights.** Anything that needs
+  the internet is marked `@pytest.mark.network`; anything that loads a real model, `@pytest.mark.slow`.
+- **No `datetime.now()` in testable logic.** Time is injected, so hysteresis and aggregations
+  can be tested with a fake clock.
+- **No license plates, faces or crops of people are stored.** This is an explicit non-goal of the plan.
+- Model weights go to `models/` and are not committed.
 
 ## Documents
 
-- `_docs/plan.md` - qué construimos y para quién, y qué queda fuera
-- `_docs/architecture.md` - los bloques, sus contratos y cómo se añade uno nuevo.
-  **Léelo antes de tocar el pipeline, un connector, un detector o un analizador.**
-- `_docs/process.md` - cómo se organiza el trabajo, roles y ciclo de vida
+(Detail documents other than `plan.md` and `process.md` are written in Spanish.)
+
+- `_docs/plan.md` - what we are building and for whom, and what is out of scope
+- `_docs/architecture.md` - the blocks, their contracts and how to add a new one.
+  **Read it before touching the pipeline, a connector, a detector or an analyzer.**
+- `_docs/process.md` - how work is organized, roles and lifecycle
 - Before writing tests, read `_docs/testing-guidelines.md`
 - For anything touching the UI, read `_docs/design-system.md`
 - For anything touching the API, read `_docs/api.md`

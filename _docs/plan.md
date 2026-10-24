@@ -1,167 +1,166 @@
-# CV Platform — Plan
+# CV Platform - Plan
 
-> Especificación del producto. Es la fuente de verdad de **qué** construimos y **para quién**.
-> Si un acceptance criterion está mal, se corrige aquí y en el issue, nunca en el código.
+> Product specification. It is the source of truth for **what** we build and **for whom**.
+> If an acceptance criterion is wrong, fix it here and in the issue, never in the code.
 
 ## What this is
 
-Plataforma local de visión por computador para montar y explorar prototipos de análisis de
-vídeo sin coste de cloud. Un **proyecto** es un fichero de configuración que conecta una
-fuente de vídeo (connector) con un modelo de detección y uno o varios analizadores de negocio.
-Todos los proyectos comparten el mismo frontal: un dashboard desde el que se navega a la vista
-de cada uno.
+A local computer-vision platform for building and exploring video-analysis prototypes at zero
+cloud cost. A **project** is a configuration file that connects a video source (connector) to a
+detection model and one or more business analyzers. All projects share the same front end: a
+dashboard from which you navigate to each project's view.
 
-El objetivo real de esta primera versión no es un producto vendible: es validar que la
-**arquitectura por bloques** aguanta añadir un connector nuevo, un modelo nuevo o un análisis
-nuevo sin tocar el resto del sistema.
+The real goal of this first version is not a sellable product: it is to validate that the
+**block architecture** can take a new connector, a new model or a new analysis without touching
+the rest of the system.
 
 ## Users
 
-- **Operador de la plataforma** (yo) — define proyectos en YAML, dibuja las zonas de interés
-  sobre un fotograma, arranca y para los workers, y revisa por qué un proyecto se ha caído.
-- **Observador** — abre el dashboard, entra en un proyecto y lee el vídeo anotado y las
-  métricas. No configura nada, no arranca nada, no puede romper nada.
+- **Platform operator** (me) - defines projects in YAML, draws the zones of interest on a frame,
+  starts and stops workers, and checks why a project went down.
+- **Observer** - opens the dashboard, enters a project and reads the annotated video and the
+  metrics. Configures nothing, starts nothing, cannot break anything.
 
-En el MVP ambos roles son la misma persona y no hay autenticación. La separación está aquí
-porque condiciona el diseño de la API: todo lo que el observador necesita es de solo lectura.
+In the MVP both roles are the same person and there is no authentication. The separation is
+here because it shapes the API design: everything the observer needs is read-only.
 
 ## The main flow
 
-1. Abro el dashboard y veo la lista de proyectos, cada uno con su estado (corriendo / parado /
-   caído) y su KPI principal.
-2. Entro en el proyecto *Parking y tráfico*.
-3. Veo el vídeo anotado casi en directo: cajas de los vehículos, su ID de seguimiento, las
-   zonas de aparcamiento coloreadas según estén libres u ocupadas, y la línea de conteo.
-4. Encima del vídeo, tres KPIs: **plazas libres / total**, **vehículos por minuto** y
-   **sentido dominante**.
-5. Debajo, dos gráficas temporales — ocupación del aparcamiento y flujo de tráfico — con
-   selector de ventana (última hora / últimas 24 h).
-6. Si el encuadre de la cámara cambia, abro el editor de zonas, redibujo los polígonos sobre
-   un fotograma actual, guardo, y el worker recarga la configuración sin reiniciarse.
+1. I open the dashboard and see the list of projects, each with its status (running / stopped /
+   down) and its main KPI.
+2. I enter the *Parking and traffic* project.
+3. I see the annotated video almost live: vehicle boxes, their tracking ID, the parking zones
+   colored by free or occupied, and the counting line.
+4. Above the video, three KPIs: **free spaces / total**, **vehicles per minute** and
+   **dominant direction**.
+5. Below, two time-series charts - parking occupancy and traffic flow - with a window selector
+   (last hour / last 24 h).
+6. If the camera framing changes, I open the zone editor, redraw the polygons on a current
+   frame, save, and the worker reloads the configuration without restarting.
 
 ## Features
 
 **MVP**
 
-- Connectors de vídeo intercambiables: fichero local, directo de YouTube, RTSP, webcam.
-- Detección de objetos con YOLO11 (pesos COCO preentrenados), sustituible por otro detector.
-- Seguimiento multiobjeto para dar identidad estable a cada vehículo entre fotogramas.
-- Analizador de **tráfico**: cruces de línea con sentido, conteo por minuto y densidad de
-  vehículos en la escena.
-- Analizador de **aparcamiento**: ocupación por plaza definida como polígono, con histéresis
-  temporal para que la ocupación no parpadee.
-- Persistencia de métricas y eventos, y agregación por minuto.
-- API de solo lectura + streaming del vídeo anotado.
-- Dashboard con lista de proyectos y vista de detalle compartida por todos.
+- Interchangeable video connectors: local file, YouTube live stream, RTSP, webcam.
+- Object detection with YOLO11 (pretrained COCO weights), replaceable by another detector.
+- Multi-object tracking to give each vehicle a stable identity across frames.
+- **Traffic** analyzer: directional line crossings, per-minute counts and vehicle density in
+  the scene.
+- **Parking** analyzer: occupancy per space defined as a polygon, with temporal hysteresis so
+  that occupancy does not flicker.
+- Persistence of metrics and events, and per-minute aggregation.
+- Read-only API + streaming of the annotated video.
+- Dashboard with a project list and a detail view shared by all projects.
 
-**Después del MVP**
+**After the MVP**
 
-- Editor visual de zonas en el navegador.
-- Aceleración con OpenVINO sobre la iGPU Intel.
-- Más analizadores (tiempo medio de estancia por plaza, colas, mapa de calor).
+- Visual zone editor in the browser.
+- OpenVINO acceleration on the Intel iGPU.
+- More analyzers (average dwell time per space, queues, heat map).
 
 ## Non-goals
 
-Lo que este proyecto **no** hace. Esta lista vale tanto como la de features: es la que impide
-que el sistema crezca por los lados.
+What this project does **not** do. This list is worth as much as the feature list: it is what
+keeps the system from growing sideways.
 
-- **No lee matrículas ni identifica personas.** Ni en MVP ni después. Es una fuente pública y
-  la plataforma cuenta objetos, no sigue individuos.
-- No hace re-identificación de un vehículo entre cámaras distintas.
-- No entrena modelos propios. Se usan pesos preentrenados; el fine-tuning es otro proyecto.
-- No usa inferencia en cloud de pago. Todo corre en el portátil.
-- No tiene multiusuario, login ni permisos.
-- No manda alertas ni notificaciones.
-- **No detecta automáticamente dónde están las plazas de aparcamiento.** Se dibujan a mano.
-  Inferir la geometría del parking desde el vídeo es un problema abierto y no es este proyecto.
-- No garantiza tiempo real estricto. Muestreamos fotogramas; no procesamos los 25 fps.
+- **It does not read license plates or identify people.** Neither in the MVP nor later. The
+  source is public and the platform counts objects, it does not follow individuals.
+- It does not do re-identification of a vehicle across different cameras.
+- It does not train its own models. Pretrained weights are used; fine-tuning is another project.
+- It does not use paid cloud inference. Everything runs on the laptop.
+- It has no multi-user support, login or permissions.
+- It does not send alerts or notifications.
+- **It does not automatically detect where the parking spaces are.** They are drawn by hand.
+  Inferring parking geometry from video is an open problem and not this project.
+- It does not guarantee strict real time. We sample frames; we do not process all 25 fps.
 
-## Restricciones de hardware
+## Hardware constraints
 
-Condicionan el diseño entero, así que están en la spec y no en una nota al pie:
+They shape the whole design, so they are in the spec and not in a footnote:
 
 | | |
 |---|---|
 | CPU | Intel i7-1365U (2 P-cores + 8 E-cores, 15 W) |
-| GPU | Intel Iris Xe integrada — **no hay CUDA** |
+| GPU | Intel Iris Xe integrated - **no CUDA** |
 | RAM | 32 GB |
 
-Consecuencias de diseño, no opiniones:
+Design consequences, not opinions:
 
-- Modelo **nano** (YOLO11n) por defecto. Los tamaños s/m/l se pueden configurar, pero la
-  configuración por defecto tiene que ir fluida en esta máquina.
-- La tasa de inferencia se **desacopla** de la del vídeo. Cada analizador declara la frecuencia
-  que necesita: ~5 fps para tráfico (mínimo para que el tracker asocie IDs), ~0,5 fps para
-  aparcamiento (una plaza no cambia en dos segundos).
-- El worker de inferencia es un proceso **separado** de la API. Es lo que permitirá más
-  adelante desplegar API y frontend en un plan gratuito de cloud mientras el trabajo pesado
-  se queda en casa.
+- **Nano** model (YOLO11n) by default. The s/m/l sizes can be configured, but the default
+  configuration has to run smoothly on this machine.
+- The inference rate is **decoupled** from the video rate. Each analyzer declares the frequency
+  it needs: ~5 fps for traffic (the minimum for the tracker to associate IDs), ~0.5 fps for
+  parking (a space does not change in two seconds).
+- The inference worker is a **separate** process from the API. This is what will later allow
+  deploying the API and front end on a free cloud plan while the heavy work stays at home.
 
 ## Acceptance criteria (MVP)
 
-- [ ] Puedo arrancar un worker apuntando a un fichero de proyecto y procesa el directo de
-      YouTube durante 30 minutos seguidos sin intervención.
-- [ ] Si la URL del directo caduca a mitad de ejecución, el worker la vuelve a resolver y
-      continúa, dejando constancia en el log.
-- [ ] El dashboard lista los proyectos existentes y puedo entrar en uno desde ahí.
-- [ ] La vista de proyecto muestra el vídeo anotado con una caja y un ID por vehículo.
-- [ ] La vista muestra "plazas libres / total" y el número baja cuando un coche aparca en una
-      zona definida.
-- [ ] La vista muestra vehículos por minuto desglosado por sentido de circulación.
-- [ ] Hay una gráfica de la ocupación del aparcamiento de las últimas 2 horas.
-- [ ] Los analizadores tienen tests que corren con detecciones sintéticas, sin vídeo ni red.
-- [ ] El sistema completo arranca con `docker compose up`.
-- [ ] `uv run pytest` pasa en verde y se ejecuta en CI en cada push.
+- [ ] I can start a worker pointing at a project file and it processes the YouTube live stream
+      for 30 minutes in a row without intervention.
+- [ ] If the live stream URL expires mid-run, the worker resolves it again and continues,
+      leaving a record in the log.
+- [ ] The dashboard lists the existing projects and I can enter one from there.
+- [ ] The project view shows the annotated video with one box and one ID per vehicle.
+- [ ] The view shows "free spaces / total" and the number goes down when a car parks in a
+      defined zone.
+- [ ] The view shows vehicles per minute broken down by direction of travel.
+- [ ] There is a chart of parking occupancy for the last 2 hours.
+- [ ] The analyzers have tests that run on synthetic detections, with no video and no network.
+- [ ] The whole system starts with `docker compose up`.
+- [ ] `uv run pytest` passes and runs in CI on every push.
 
 ## Tech stack
 
-Decidido en la Fase 1. Cada elección incluye por qué, incluido "porque sé revisarla".
+Decided in Phase 1. Each choice includes why, including "because I can review it".
 
-| Bloque | Decisión | Por qué |
+| Block | Decision | Why |
 |---|---|---|
-| Lenguaje | Python 3.13 + `uv` | Es donde vive todo el ecosistema de visión. `uv` ya está instalado y resuelve rápido. |
-| Detección | `ultralytics` (YOLO11) | Es el estándar de facto, está mantenido, y trae tracker y export a ONNX/OpenVINO en la misma librería. |
-| Tracking | ByteTrack (vía ultralytics) | Va incluido, no añade dependencia, y funciona bien con detecciones ruidosas. |
-| Geometría / anotación | `supervision` | Polígonos, líneas de conteo y dibujo de anotaciones ya resueltos y testeados. |
-| Vídeo | OpenCV + `yt-dlp` + ffmpeg | `yt-dlp` resuelve el HLS del directo; OpenCV/ffmpeg decodifican. ffmpeg ya está en el sistema. |
-| API | FastAPI + Uvicorn | Genera el `openapi.yaml` que es el contrato con el frontend, en vez de escribirlo a mano y que se desincronice. |
-| Persistencia | SQLite (local) / Postgres (Docker) vía SQLModel | Una sola capa de modelos para los dos entornos. SQLite en WAL aguanta de sobra este volumen. |
-| Frontend | React + Vite + Tailwind | Frontal compartido por todos los proyectos, con la comunicación con backend centralizada en un cliente generado desde el OpenAPI. |
-| Tests | pytest + Vitest | — |
+| Language | Python 3.13 + `uv` | That is where the whole vision ecosystem lives. `uv` is already installed and resolves fast. |
+| Detection | `ultralytics` (YOLO11) | The de facto standard, maintained, and it ships a tracker and ONNX/OpenVINO export in the same library. |
+| Tracking | ByteTrack (via ultralytics) | Included, adds no dependency, and works well with noisy detections. |
+| Geometry / annotation | `supervision` | Polygons, counting lines and annotation drawing already solved and tested. |
+| Video | OpenCV + `yt-dlp` + ffmpeg | `yt-dlp` resolves the live stream's HLS; OpenCV/ffmpeg decode. ffmpeg is already on the system. |
+| API | FastAPI + Uvicorn | Generates the `openapi.yaml` that is the contract with the front end, instead of writing it by hand and letting it drift. |
+| Persistence | SQLite (local) / Postgres (Docker) via SQLModel | A single model layer for both environments. SQLite in WAL mode easily handles this volume. |
+| Frontend | React + Vite + Tailwind | Front end shared by all projects, with backend communication centralized in a client generated from the OpenAPI. |
+| Tests | pytest + Vitest | - |
 
-**Rechazado:**
+**Rejected:**
 
-- **Streamlit** — arranca en una tarde, pero no soporta un dashboard multiproyecto ni el
-  streaming de vídeo anotado sin pelearse con el framework.
-- **Next.js** — SSR y un runtime Node en producción que un dashboard interno no necesita.
-- **Django** — el ORM y el admin no aportan aquí, y el proyecto no es CRUD.
-- **Kafka / Redis Streams** entre worker y API — infraestructura que este volumen no justifica.
-  La base de datos es la cola. Si algún día hace falta, el bloque `Sink` es donde se cambia.
-- **CUDA / GPU cloud** — restricción explícita de coste.
+- **Streamlit** - starts up in an afternoon, but it does not support a multi-project dashboard
+  or annotated-video streaming without fighting the framework.
+- **Next.js** - SSR and a Node runtime in production that an internal dashboard does not need.
+- **Django** - the ORM and admin add nothing here, and the project is not CRUD.
+- **Kafka / Redis Streams** between worker and API - infrastructure this volume does not
+  justify. The database is the queue. If it is ever needed, the `Sink` block is where to change it.
+- **CUDA / GPU cloud** - explicit cost constraint.
 
-## Riesgos conocidos
+## Known risks
 
-No son excusas por adelantado: son las cosas que hay que medir pronto porque pueden invalidar
-el enfoque.
+Not excuses in advance: these are the things to measure early because they could invalidate
+the approach.
 
-1. **La URL del directo caduca.** Las URLs HLS que devuelve `yt-dlp` viven horas. El connector
-   tiene que re-resolver, no morir. Es la causa número uno de que estos prototipos aparezcan
-   caídos por la mañana.
-2. **Rendimiento en CPU.** Hay que medir los fps reales de YOLO11n a 640 px en esta máquina
-   antes de dar por buena la tasa de muestreo. Si no llegan, la salida es OpenVINO o bajar la
-   resolución, no bajar el alcance.
-3. **Oclusión y perspectiva.** Un coche aparcado detrás de otro puede no verse. La ocupación
-   medida es una aproximación; hay que decir cuál es su fiabilidad, no presentarla como exacta.
-4. **Noche y lluvia.** Los pesos COCO caen bastante con poca luz. Conviene ver la métrica de
-   una noche antes de sacar conclusiones de la serie temporal.
-5. **La cámara se mueve.** Si el operador del directo cambia el encuadre, todos los polígonos
-   dejan de valer. De ahí que el editor de zonas y la recarga en caliente estén en el plan.
+1. **The live stream URL expires.** The HLS URLs that `yt-dlp` returns live for hours. The
+   connector has to re-resolve, not die. It is the number one reason these prototypes show up
+   down in the morning.
+2. **CPU performance.** The real fps of YOLO11n at 640 px on this machine must be measured
+   before accepting the sampling rate. If they do not reach it, the way out is OpenVINO or a
+   lower resolution, not a smaller scope.
+3. **Occlusion and perspective.** A car parked behind another may not be seen. Measured
+   occupancy is an approximation; its reliability has to be stated, not presented as exact.
+4. **Night and rain.** COCO weights degrade considerably in low light. Look at a night's
+   metric before drawing conclusions from the time series.
+5. **The camera moves.** If the live stream operator changes the framing, all polygons stop
+   being valid. Hence the zone editor and hot reload are in the plan.
 
 ## Open questions
 
-- ~~URL concreta del directo de YouTube del primer prototipo.~~ Resuelta: *Town of Collingwood
-  Live Stream*, 1080p30. El reconocimiento de la fuente está en
-  [`projects/01-parking-trafico/fuente.md`](../projects/01-parking-trafico/fuente.md).
-- ¿Se guardan las detecciones individuales o solo los agregados por minuto? Empezamos por
-  agregados y una muestra de detecciones; revisar cuando se vea crecer la base de datos.
-- Dónde se despliega la API/frontend cuando toque (criterio 10 del checklist del curso).
+- ~~Concrete URL of the first prototype's YouTube live stream.~~ Resolved: *Town of Collingwood
+  Live Stream*, 1080p30. The source reconnaissance is in
+  [`projects/01-parking-trafico/fuente.md`](../projects/01-parking-trafico/fuente.md) (Spanish).
+- Are individual detections stored, or only per-minute aggregates? We start with aggregates and
+  a sample of detections; revisit when the database is seen to grow.
+- Where the API/front end is deployed when the time comes (the Deployment criterion of the
+  course checklist, [`checklist-proyecto-final.md`](checklist-proyecto-final.md)).

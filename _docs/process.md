@@ -34,39 +34,39 @@ subagents. It does not groom, implement or test itself.
 - QA does not fix the code, only outputs PASS or FAIL
 - The orchestrator closes the issue only after QA outputs PASS
 
-## Dos niveles de ceremonia
+## Two levels of ceremony
 
-Decidido el 2026-08-23, con el coste de los dos primeros ciclos ya medido: el #2 costó
-386 k tokens de subagente y el #3 costó 1,06 M, porque un FAIL obliga a repetir la vuelta
-entera de ingeniero y QA. El ciclo completo encuentra cosas de verdad, pero cuesta, y no
-todas las tareas se juegan lo mismo.
+Decided on 2026-08-23, once the cost of the first two cycles had been measured: issue #2 cost
+386k subagent tokens and issue #3 cost 1.06M, because a FAIL forces a full engineer + QA round
+to be repeated. The full cycle does find real problems, but it is expensive, and not every task
+carries the same risk.
 
-**Ciclo completo (PM → Engineer → QA, cada uno en su sesión)** para las tareas donde un error
-es caro y difícil de ver a simple vista:
+**Full cycle (PM -> Engineer -> QA, each in its own session)** for tasks where a mistake is
+costly and hard to spot by eye:
 
-- Lógica de negocio: los analizadores (#10 tráfico, #11 aparcamiento)
-- Contratos que otros consumen: la API y su `openapi.yaml` (#12)
-- Cualquier tarea cuyo resultado sea un número que alguien vaya a creerse
+- Business logic: the analyzers (#10 traffic, #11 parking)
+- Contracts that others consume: the API and its `openapi.yaml` (#12)
+- Any task whose result is a number that someone is going to believe
 
-**Ciclo ligero (el orquestador groomea, implementa y verifica contra los criterios)** para
-las tareas mecánicas, donde el fallo se ve al ejecutar: connectors, adaptadores, empaquetado
-(#4, #7, #15) y las tareas pequeñas de seguimiento.
+**Light cycle (the orchestrator grooms, implements and verifies against the criteria)** for
+mechanical tasks, where a failure is visible when you run it: connectors, adapters, packaging
+(#4, #7, #15) and small follow-up tasks.
 
-### Lo que el ciclo ligero pierde, dicho claro
+### What the light cycle gives up
 
-En el ciclo ligero quien escribe el código es quien lo juzga, que es exactamente lo que el
-ciclo completo existe para evitar. Se acepta a sabiendas y solo donde el fallo es visible al
-ejecutar. A cambio, en el ciclo ligero es obligatorio:
+In the light cycle, whoever writes the code is the one who judges it, which is exactly what the
+full cycle exists to prevent. This is accepted knowingly and only where failure is visible at
+run time. In exchange, the light cycle requires:
 
-- Recorrer los acceptance criteria uno a uno y decir qué comando demuestra cada uno.
-- Pegar la salida real de los comandos, no describirla.
-- Si aparece una duda sobre si algo está bien, se sube a ciclo completo. La duda es la señal.
+- Walking through the acceptance criteria one by one and naming the command that proves each one.
+- Pasting the real output of the commands, not describing it.
+- If there is any doubt about whether something is right, escalate to the full cycle. The doubt
+  is the signal.
 
-### Los criterios se corrigen en el issue, nunca en el código
+### Criteria are fixed in the issue, never in the code
 
-Los dos FAIL del issue #3 fueron defectos del enunciado, no del código: un mensaje de error
-que nombraba un campo con valor por defecto (y un campo con default no puede faltar nunca), y
-un presupuesto de tiempo por test que no contaba con que un subproceso que importa pydantic
-cuesta ~1 s de suelo. Los dos se arreglaron editando el issue y dejando una nota fechada
-explicando por qué. Es la forma barata de arreglarlo; hacerlo en el código deja el enunciado
-mintiendo para siempre.
+Both FAILs on issue #3 were defects in the issue text, not in the code: an error message that
+named a field with a default value (and a field with a default can never be missing), and a
+per-test time budget that ignored that a subprocess importing pydantic has a ~1 s floor. Both
+were fixed by editing the issue and leaving a dated note explaining why. That is the cheap way
+to fix it; fixing it in the code leaves the issue text lying forever.

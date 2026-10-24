@@ -1,88 +1,119 @@
-# Checklist del proyecto final
+# Final project checklist
 
-Los 14 criterios de evaluación por peer review del curso, en formato marcable.
-Máximo **30 puntos**. Fuente: [`project/README.md`](../../project/README.md) del repo del curso.
+The 12 peer-review criteria of **AI Dev Tools Zoomcamp 2026**, in tickable form, with the real
+current status of each one in this repository.
 
-> ⚠️ Los criterios 2026 están marcados como **draft** en el repo: pueden cambiar antes
-> del 31 de agosto. Revísalos cuando arranque la cohorte.
+- Maximum **24 points**; **10 points** are needed to pass.
+- Each participant must also peer-review **3 other projects**.
+- Status key: `[x]` done and verifiable in the repo, `[ ]` pending or not yet verified.
 
-## Contenido esperado del repo
+## Summary
 
-```text
-README.md
-product-spec.md              ← nuestro _docs/plan.md
-AGENTS.md
-frontend/
-backend/
-openapi.yaml
-docker-compose.yml
-.github/workflows/
-docs/                        ← nuestro _docs/
-security/
-ops/
-```
+| # | Criterion | Max | Status |
+|---|---|---|---|
+| 1 | Problem Description | 2 | Pending final review |
+| 2 | Product Specification | 2 | Pending final review |
+| 3 | Agent Team Specification | 2 | Pending final review |
+| 4 | Context Management | 2 | Pending final review |
+| 5 | Application | 2 | Done |
+| 6 | Testing | 2 | Done |
+| 7 | Containerization | 2 | Done |
+| 8 | Deployment | 2 | Pending |
+| 9 | CI/CD | 3 | Partial (level 1 of 3) |
+| 10 | Observability | 2 | Pending |
+| 11 | Alerting on user impact | 1 | Pending |
+| 12 | On-call agent | 2 | Pending |
 
-Si completas el Módulo 3, además:
+## Criteria
 
-```text
-agent-capabilities/
-agent-hooks/
-mcp-server/
-plugins/ o custom-agent/
-docs/agent-extension-pack.md
-docs/permissions.md
-```
+### 1. Problem Description (0-2)
 
-## Criterios
+- [ ] The README describes the problem, the functionality and the expected behavior.
 
-**1. Problem description** (0–2)
-- [ ] El README describe el problema, la funcionalidad y el comportamiento esperado → 2
+Status: pending final review. Material exists in [`README.md`](../README.md) ("The problem",
+"What it does") and [`plan.md`](plan.md); not yet marked done.
 
-**2. AI-assisted development workflow** (0–2)
-- [ ] Documentado el workflow: prompts/delegación, ficheros de contexto, revisión manual y verificación → 2
-- ↳ esto sale de `_docs/ai-usage-report.md` si lo rellenas sobre la marcha
+### 2. Product Specification (0-2)
 
-**3. Technologies and architecture** (0–2)
-- [ ] Frontend, backend, BD, contenedores, CI/CD y cómo encajan entre sí → 2
+- [ ] A product spec exists.
+- [ ] A public task tracker with acceptance criteria, with evidence of use by agents.
 
-**4. Frontend** (0–3)
-- [ ] Funcional y bien estructurado, con la comunicación con backend centralizada → 2
-- [ ] + tests de la lógica principal con instrucciones para ejecutarlos → 3
+Status: pending final review. Spec: [`plan.md`](plan.md). Tracker: the GitHub issues of this
+repository, each with acceptance criteria. Evidence of agent use still has to be gathered
+(see [`ai-usage-report.md`](ai-usage-report.md) and [`process.md`](process.md)).
 
-**5. API contract** (0–2)
-- [ ] `openapi.yaml` refleja las necesidades del frontend y es el contrato del backend → 2
+### 3. Agent Team Specification (0-2)
 
-**6. Backend** (0–3)
-- [ ] Bien estructurado y sigue el OpenAPI → 2
-- [ ] + tests de la funcionalidad principal → 3
+- [ ] The agent team (roles, lifecycle, process) is specified.
 
-**7. Database** (0–2)
-- [ ] Integrada, soporta distintos entornos y está documentada → 2
+Status: pending final review. Roles and lifecycle: [`process.md`](process.md); role
+definitions in [`team/`](team/) (`pm.md`, `software-engineer.md`, `qa-engineer.md`).
 
-**8. Containerization** (0–2)
-- [ ] El sistema completo arranca con Docker/Docker Compose e instrucciones claras → 2
+### 4. Context Management (0-2)
 
-**9. Integration testing** (0–2)
-- [ ] Separados de los unit tests, cubren flujos clave, documentados → 2
+- [ ] `AGENTS.md` plus modular documents loaded on demand.
 
-**10. Deployment** (0–2)
-- [ ] Desplegado en cloud con URL funcionando o prueba clara del despliegue → 2
+Status: pending final review. [`AGENTS.md`](../AGENTS.md) is short and links to modular
+documents in `_docs/` (plan, architecture, process, testing guidelines, design system, API).
 
-**11. CI/CD** (0–2)
-- [ ] El pipeline ejecuta tests **y** despliega cuando pasan → 2
+### 5. Application (0-2)
 
-**12. Agent extension pack** (0–2) · *Módulo 3*
-- [ ] Instrucciones de proyecto + workflow reutilizable + subagente + MCP tool/server + hook/guardrail + notas de permisos, todo documentado → 2
+- [x] Full-stack application, working end to end, runnable locally with one command.
 
-**13. Security, audit & DevOps hardening** (0–2) · *Módulo 4*
-- [ ] Output de auditoría de PR + hallazgos de scan de seguridad + notas de seguridad de agentes/extensiones + diagnóstico operacional + política de datos/herramientas IA → 2
+Status: done. Worker + API + React dashboard; `docker compose up --build` starts the whole
+system (see [`README.md`](../README.md), "Quick start").
 
-**14. Reproducibility** (0–2)
-- [ ] Instrucciones claras para instalar, ejecutar, testear y desplegar de punta a punta → 2
+### 6. Testing (0-2)
+
+- [x] Unit and integration tests, runnable with one command, and they pass.
+
+Status: done. `uv run pytest` runs the backend suite (unit, component and integration
+directories under `tests/`); the frontend has Vitest tests (`npm test` in `frontend/`).
+
+### 7. Containerization (0-2)
+
+- [x] The complete system, including the database, starts via Docker Compose with one command.
+
+Status: done. `compose.yaml` defines `db` (Postgres 17), `api`, `worker` and `web`; start it
+with `docker compose up --build`.
+
+### 8. Deployment (0-2)
+
+- [ ] A public URL, or a clear demo of the deployed system.
+
+Status: pending. Nothing is deployed yet; the platform is not yet chosen
+(the `deploy` job in `.github/workflows/ci.yml` is commented out).
+
+### 9. CI/CD (0-3)
+
+- [x] Level 1: tests run on every pull request.
+- [ ] Level 2: level 1 plus automatic continuous delivery.
+- [ ] Level 3: level 2 plus deployment to a dev environment and a manual deployment to production.
+
+Status: partial, level 1 only. `.github/workflows/ci.yml` runs on every push to `main` and on
+every pull request: ruff lint, ruff format check, `uv run pytest -m "not slow and not network"`,
+and for the front end `npm test` and `npm run build`. No deploy step exists yet.
+
+### 10. Observability (0-2)
+
+- [ ] Structured logs, metrics and traces sharing the same trace ID, with no customer data,
+      visible in a UI.
+
+Status: pending.
+
+### 11. Alerting on user impact (0-1)
+
+- [ ] Alerts fire on user-visible impact.
+
+Status: pending.
+
+### 12. On-call agent (0-2)
+
+- [ ] An agent that handles on-call duties (reacts to alerts).
+
+Status: pending.
 
 ---
 
-**Total: ___ / 30**
-
-> 💡 Los criterios 12 y 13 son los que más gente se deja: dependen de los Módulos 3 y 4,
-> que se dan al final. Reserva tiempo para ellos.
+**Points confirmed so far: 7 / 24** (Application 2, Testing 2, Containerization 2, CI/CD 1).
+Pass mark: 10.
