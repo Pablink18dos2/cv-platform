@@ -1,0 +1,39 @@
+# Proyecto de demostración: reproduce en bucle el fixture de la calle para desarrollar el
+# dashboard (#13) y probar el multiproyecto junto a 01-parking-trafico. No es una cámara real.
+id: 00-demo
+name: Demo (calle en bucle)
+
+source:
+  type: file
+  path: ../../tests/fixtures/video/calle-1080p-6s.mp4
+  loop: true
+  target_fps: 5
+
+detector:
+  type: yolo
+  weights: yolo11n.pt
+  imgsz: 640
+  conf: 0.35
+  classes: [car, motorcycle, bus, truck]
+  roi: [0.15, 0.28, 1.0, 1.0]
+
+tracker:
+  type: bytetrack
+  # 0,5 es lo que #7 midió que hace falta en esta escena; con el 0,7 por defecto se pierden
+  # más de la mitad de los vehículos.
+  track_activation_threshold: 0.5
+
+analyzers:
+  - type: traffic_flow
+    lines:
+      - id: calzada
+        p1: [0.25, 0.62]
+        p2: [0.62, 0.50]
+        positive_direction: acercandose
+        negative_direction: alejandose
+  - type: parking_occupancy
+    zones_file: zones.json
+
+sinks:
+  - type: sqlite
+  - type: preview
