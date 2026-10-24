@@ -7,6 +7,12 @@ renderizar y se mira.
 
     uv run python scripts/render_traffic_frame.py data/traffic_flow_anotado.jpg
     uv run python scripts/render_traffic_frame.py salida.jpg --frame 20 --line 0.25,0.62,0.62,0.50
+    uv run python scripts/render_traffic_frame.py s.jpg --imagen c.jpg --roi 0.17,0.27,1,1
+
+Con `--imagen` se detecta y se sigue sobre una sola captura del directo: no hay movimiento,
+asi que no cuenta cruces, pero deja ver la linea y los puntos de referencia de cada vehiculo
+sobre el asfalto (cada deteccion hace de track), y imprime la confianza de las detecciones
+(para reconfirmar el umbral).
 
 Corre detector y tracker de verdad (`track_activation_threshold: 0.5`, lo que #7 midio que
 hace falta en esta escena) sobre todos los fotogramas hasta el pedido, para que los
@@ -16,12 +22,15 @@ contadores de la imagen sean los acumulados hasta ese momento, e imprime cada cr
 from __future__ import annotations
 
 import argparse
+from datetime import UTC, datetime
 from pathlib import Path
 
 import cv2
+import numpy as np
 
 from cvp.analyzers import TrafficFlowAnalyzer
 from cvp.analyzers.geometry import LineaDeConteo
+from cvp.core import BBox, Frame, Track
 from cvp.detectors import YoloDetector
 from cvp.sources import FileVideoSource
 from cvp.trackers import ByteTrackTracker
@@ -46,6 +55,13 @@ def _linea(texto: str) -> LineaDeConteo:
     )
 
 
+def _roi(texto: str | None, ancho: int, alto: int) -> BBox | None:
+    if not texto:
+        return None
+    x1, y1, x2, y2 = (float(v) for v in texto.split(","))
+    return BBox(x1 * ancho, y1 * alto, x2 * ancho, y2 * alto)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     parser.add_argument("salida", type=Path, help="ruta del JPEG anotado")
@@ -54,18 +70,43 @@ def main() -> None:
     )
     parser.add_argument("--fps", type=float, default=5.0)
     parser.add_argument("--line", default=LINEA_POR_DEFECTO, help="x1,y1,x2,y2 en fracciones")
+    parser.add_argument("--imagen", type=Path, help="JPEG en vez del fixture de video")
+    parser.add_argument("--roi", help="x1,y1,x2,y2 en fracciones; sin el, fotograma completo")
     args = parser.parse_args()
 
     detector = YoloDetector("yolo11n.pt", imgsz=640, conf=0.35, classes=CLASES)
     tracker = ByteTrackTracker(frame_rate=args.fps, track_activation_threshold=0.5)
     analizador = TrafficFlowAnalyzer([_linea(args.line)], name="trafico")
 
+    if args.imagen:
+        imagen = cv2.imread(str(args.imagen))
+        if imagen is None:
+            raise SystemExit(f"no se puede leer la imagen {args.imagen}")
+        alto, ancho = imagen.shape[:2]
+        fotograma = Frame(image=imagen, index=0, timestamp=datetime.now(UTC))
+        detecciones = detector.detect(fotograma, _roi(args.roi, ancho, alto))
+        confianzas = np.array([d.confidence for d in detecciones])
+        print(
+            f"{len(detecciones)} detecciones; confianza mediana {np.median(confianzas):.2f}, "
+            f">=0.5: {(confianzas >= 0.5).mean():.0%}, >=0.7: {(confianzas >= 0.7).mean():.0%}"
+        )
+        # Con una sola captura el tracker no confirma ninguna identidad: cada deteccion
+        # hace de track, que es lo que hace falta para ver su punto de referencia.
+        tracks = [Track.from_detection(d, i) for i, d in enumerate(detecciones)]
+        anotado = analizador.annotate(imagen, tracks)
+        args.salida.parent.mkdir(parents=True, exist_ok=True)
+        cv2.imwrite(str(args.salida), anotado)
+        print(f"{len(tracks)} tracks -> {args.salida.resolve()}")
+        return
+
     origen = FileVideoSource(FIXTURE, target_fps=args.fps)
     origen.open()
     try:
         ultimo = None
         for fotograma in origen.frames():
-            detecciones = detector.detect(fotograma)
+            detecciones = detector.detect(
+                fotograma, _roi(args.roi, fotograma.image.shape[1], fotograma.image.shape[0])
+            )
             tracks = tracker.update(fotograma, detecciones)
             salida = analizador.process(fotograma, tracks, detecciones)
             for evento in salida.events:

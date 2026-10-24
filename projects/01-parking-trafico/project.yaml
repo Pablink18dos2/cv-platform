@@ -1,13 +1,8 @@
 # Proyecto 01: parking y tráfico sobre el directo de Collingwood.
 #
-# **Provisional.** Este fichero existe para poder medir el encadenado completo (#8) contra
-# el directo real. Las líneas de conteo, las zonas de aparcamiento y los umbrales afinados
-# son de #14, con el vídeo delante.
-#
-# `analyzers` y `sinks` están vacíos a propósito: los analizadores (#10, #11) y los sinks
-# (#9) todavía no existen, y un `type:` sin implementación registrada haría fallar el
-# arranque. Con las dos listas vacías corren fuente, detector y tracker, que es exactamente
-# lo que hay que cronometrar.
+# Configurado en #14 sobre `reference-frame-2026-10-18.jpg`, que es el mismo encuadre que el
+# de agosto (SIFT: 1-2 px de diferencia); lo que cambia entre ambos es la escena. Si el
+# ayuntamiento mueve la cámara, zonas, línea y ROI dejan de valer: de eso avisa `framing_guard`.
 
 id: 01-parking-trafico
 name: Parking y tráfico (Collingwood)
@@ -31,13 +26,57 @@ detector:
   imgsz: 640
   conf: 0.35
   classes: [car, motorcycle, bus, truck]
-  # La escena sin el cielo, sin las fachadas y sin el fondo lejano. Es el mismo recorte que
-  # el del benchmark (BBox(288, 302, 1920, 1080) sobre 1920x1080), en fracciones.
-  roi: [0.15, 0.28, 1.0, 1.0]
+  # Sin el cielo, las fachadas y la acera izquierda (x < 0.17: solo peatones y ramas), y sin el
+  # fondo lejano (y < 0.27: coches de pocos píxeles). Hay que dejar x2 = y2 = 1.0 porque el
+  # coche del borde inferior derecho es de primer plano. Ocupa 1593x788 de 1920x1080, casi lo
+  # mismo que el recorte medido en #6 (1632x778), así que sus 6,5 fps siguen valiendo.
+  roi: [0.17, 0.27, 1.0, 1.0]
 
 tracker:
   type: bytetrack
 
-analyzers: []
+analyzers:
+  # Cruces de la línea de la calzada. `every_n_frames: 1` a propósito: el tracker ve todos los
+  # fotogramas y el analizador necesita todas sus observaciones para confirmar un cruce
+  # (`min_frames_on_side`, 2 por defecto = 0,4 s a 5 fps); saltar fotogramas solo añadiría
+  # latencia, y su coste es despreciable frente al detector.
+  - type: traffic_flow
+    name: trafico
+    every_n_frames: 1
+    lines:
+      # En el tercio inferior (y 0,77-0,84), de la plaza izquierda más cercana al borde de las
+      # bahías de la derecha: cubre los dos carriles y ninguna plaza. Escrita de izquierda a
+      # derecha, su lado positivo es el de abajo: cruzar hacia abajo es ir hacia la cámara.
+      - id: calzada
+        p1: { x: 0.43, y: 0.84 }
+        p2: { x: 0.65, y: 0.77 }
+        positive_direction: hacia_camara
+        negative_direction: hacia_fondo
 
-sinks: []
+  # Ocupación de las 11 plazas de zones.json. `every_n_frames: 5` son 1,0 muestras por segundo
+  # a 5 fps: la histéresis es de 6 s / 10 s y un coche aparca durante minutos, así que muestrear
+  # más no mejora el estado y cada muestra son 14 filas de métricas (3 globales + 11 plazas);
+  # a 5 por segundo serían unos 1,2 M de filas al día.
+  - type: parking_occupancy
+    name: plazas
+    every_n_frames: 5
+    zones_file: zones.json
+    occupied_iou: 0.35
+    hysteresis: { to_occupied_s: 6, to_free_s: 10 }
+
+  # Guardián de encuadre (#34): compara el directo con la referencia con la que se dibujaron
+  # las zonas y avisa (no suprime nada) si la cámara se mueve. ~77 ms por comparación, por eso
+  # cada 50 fotogramas (~10 s a 5 fps). Umbral 0,6 elegido en #34: entre el peor encuadre
+  # bueno (0,82) y un desplazamiento de 10 px (0,37). Noche sin verificar: podría dar falsas
+  # alarmas.
+  - type: framing_guard
+    name: framing_guard
+    reference_image: reference-frame-2026-10-18.jpg
+    every_n_frames: 50
+    min_similarity: 0.6
+    lost_after_s: 30
+    restored_after_s: 30
+
+sinks:
+  - type: sqlite
+  - type: preview

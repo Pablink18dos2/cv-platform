@@ -8,6 +8,12 @@ colocara las plazas reales del proyecto 01 con el fotograma delante: se edita el
     uv run python scripts/render_parking_frame.py data/parking_occupancy_anotado.jpg
     uv run python scripts/render_parking_frame.py salida.jpg --zones projects/01/zones.json
     uv run python scripts/render_parking_frame.py salida.jpg --frame 10 --to-occupied 2 --cajas
+    uv run python scripts/render_parking_frame.py s.jpg --imagen c.jpg --cajas --roi 0.17,0.27,1,1
+
+Con `--imagen` no hay fixture: la captura (un JPEG del directo actual) se repite lo justo
+para que la histeresis confirme el estado de cada plaza, y se detecta una sola vez. Es lo
+que hace falta al colocar poligonos sobre un encuadre que el fixture de agosto ya no
+representa.
 
 Corre el detector de verdad (sin tracker: este analizador no lo usa) sobre todos los
 fotogramas hasta el pedido, para que el estado de cada plaza sea el que la histeresis ha
@@ -19,6 +25,7 @@ para ver si un poligono esta donde el coche.
 from __future__ import annotations
 
 import argparse
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import cv2
@@ -26,6 +33,7 @@ import cv2
 from cvp.analyzers import ParkingOccupancyAnalyzer
 from cvp.analyzers.geometry import rasterizar_poligono
 from cvp.analyzers.parking import cargar_zonas
+from cvp.core import BBox, Frame
 from cvp.detectors import YoloDetector
 from cvp.sources import FileVideoSource
 
@@ -35,6 +43,23 @@ CLASES = ["car", "motorcycle", "bus", "truck"]
 
 # Las mismas tres bahias que el test `slow` de `tests/unit/test_analyzer_parking.py`.
 ZONAS_POR_DEFECTO = RAIZ / "tests" / "fixtures" / "zones" / "calle-1080p-bahias.json"
+
+
+def _fotogramas_de_imagen(ruta: Path, fps: float, segundos: float):
+    """La misma captura repetida durante `segundos`, con marcas de tiempo a `fps`."""
+    imagen = cv2.imread(str(ruta))
+    if imagen is None:
+        raise SystemExit(f"no se puede leer la imagen {ruta}")
+    inicio = datetime(2026, 1, 1, tzinfo=UTC)
+    for i in range(int(segundos * fps) + 1):
+        yield Frame(image=imagen, index=i, timestamp=inicio + timedelta(seconds=i / fps))
+
+
+def _roi(texto: str | None, ancho: int, alto: int) -> BBox | None:
+    if not texto:
+        return None
+    x1, y1, x2, y2 = (float(v) for v in texto.split(","))
+    return BBox(x1 * ancho, y1 * alto, x2 * ancho, y2 * alto)
 
 
 def main() -> None:
@@ -48,6 +73,8 @@ def main() -> None:
     parser.add_argument("--iou", type=float, default=0.35, help="occupied_iou")
     parser.add_argument("--to-occupied", type=float, default=2.0, help="to_occupied_s")
     parser.add_argument("--to-free", type=float, default=4.0, help="to_free_s")
+    parser.add_argument("--imagen", type=Path, help="JPEG en vez del fixture de video")
+    parser.add_argument("--roi", help="x1,y1,x2,y2 en fracciones; sin el, fotograma completo")
     parser.add_argument("--cajas", action="store_true", help="pinta tambien las detecciones")
     args = parser.parse_args()
 
@@ -60,17 +87,28 @@ def main() -> None:
         to_free_s=args.to_free,
     )
 
-    origen = FileVideoSource(FIXTURE, target_fps=args.fps)
-    origen.open()
-    try:
+    if args.imagen:
+        origen = None
+        fotogramas = _fotogramas_de_imagen(
+            args.imagen, args.fps, args.to_occupied + args.to_free + 1
+        )
+        alto, ancho = cv2.imread(str(args.imagen)).shape[:2]
+    else:
+        origen = FileVideoSource(FIXTURE, target_fps=args.fps)
+        origen.open()
         ancho, alto = origen.info.width, origen.info.height
+        fotogramas = origen.frames()
+    roi = _roi(args.roi, ancho, alto)
+    detecciones = None
+    try:
         mascaras = {
             z.id: rasterizar_poligono(z.to_pixels(ancho, alto), ancho, alto)
             for z in analizador.zones
         }
         ultimo = None
-        for fotograma in origen.frames():
-            detecciones = detector.detect(fotograma)
+        for fotograma in fotogramas:
+            if detecciones is None or not args.imagen:
+                detecciones = detector.detect(fotograma, roi)
             salida = analizador.process(fotograma, [], detecciones)
             mejores = " ".join(
                 f"{z.id}={max((m.iou_con(d.bbox) for d in detecciones), default=0.0):.2f}"
@@ -84,7 +122,8 @@ def main() -> None:
             if fotograma.index == args.frame:
                 break
     finally:
-        origen.close()
+        if origen is not None:
+            origen.close()
 
     if ultimo is None:
         raise SystemExit("el fixture no ha dado ningun fotograma")

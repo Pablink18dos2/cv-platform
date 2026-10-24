@@ -61,18 +61,29 @@ calle"*.
   puede deducir de la trayectoria del track sin necesidad de calibrar nada.
 - Hay peatones en escena. Se filtran por clase: solo `car`, `motorcycle`, `bus`, `truck`.
 
+## Estabilidad del encuadre: verificado el 2026-10-18
+
+El 2026-10-18 se guardó `reference-frame-2026-10-18.jpg` y se comprobó con SIFT + RANSAC contra
+`reference-frame.jpg` (agosto): traslación de ~2 px, escala 1,001, giro 0 y ninguna región se
+desplaza más de ~2 px. **El encuadre es el mismo.** Lo que cambió es la escena: los coches (las
+bahías de la derecha estaban llenas en agosto y vacías ese día), las hojas de los árboles y la
+luz. Por eso `tests/fixtures/zones/calle-1080p-bahias.json` y el fixture de vídeo siguen siendo
+válidos como encuadre (el vídeo es de agosto, y su escena, no su geometría, es la de entonces).
+El proyecto real usa `zones.json` y el guardián `framing_guard` (#34) contra la referencia de
+octubre. Los árboles del lado izquierdo tapaban plazas en agosto, tienen menos hoja ahora y
+volverán a taparlas en primavera.
+
 ## Línea de conteo
 
 El sitio bueno es el tercio inferior, cruzando la calzada de lado a lado, donde los vehículos
-son grandes y ningún árbol los tapa. Las coordenadas exactas se fijan en el issue 14, sobre
-este mismo fotograma.
+son grandes y ningún árbol los tapa. La del proyecto real está en `project.yaml` (#14).
 
 ## Pendiente de comprobar
 
 - **Vista nocturna.** Hay que capturar un fotograma de noche antes de fiarse de la serie
   temporal de 24 h.
 - **Estabilidad del encuadre.** Si el ayuntamiento mueve la cámara, todas las zonas dejan de
-  valer. Merece un test que compare periódicamente contra este fotograma de referencia.
+  valer. Lo vigila `framing_guard` (#34); su comportamiento de noche sigue sin probar.
 - **Tamaño de inferencia.** A `imgsz=640` un fotograma 1080p se reduce a un tercio y los coches
   del plano medio pierden mucho. Hay que medir 640 contra 960 en la tarea 6 y decidir con el
   dato de fps delante.
