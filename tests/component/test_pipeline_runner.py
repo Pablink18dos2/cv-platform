@@ -29,6 +29,7 @@ from cvp.core import (
     AnalyzerOutput,
     BBox,
     Detection,
+    Event,
     Frame,
     Metric,
     SourceInfo,
@@ -1145,6 +1146,60 @@ def test_el_resumen_final_lleva_los_mismos_numeros_y_la_duracion_total() -> None
     assert "detector:" in resumen and "tracker:" in resumen
     assert "fake x5" in resumen
     assert "5 escrituras, 0 errores" in resumen
+
+
+class FuenteQueCuentaDeSiMisma(FakeSource):
+    """Lo que hace `LiveVideoSource`: contadores propios y un gancho `drain_output`."""
+
+    reconnections = 3
+    last_reconnection_at = INICIO + timedelta(minutes=7)
+    reanchors = 1
+    max_latency_s = 42.5
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.pendientes = [
+            Event(
+                analyzer="source",
+                name="reanchor",
+                timestamp=INICIO,
+                attributes={"reason": "deriva", "jump_s": 120.0, "ahead_s": 0.0},
+            )
+        ]
+
+    def drain_output(self) -> AnalyzerOutput:
+        eventos, self.pendientes = self.pendientes, []
+        return AnalyzerOutput(events=eventos)
+
+
+def test_los_reanclajes_y_las_reconexiones_de_la_fuente_llegan_a_los_sinks_y_al_resumen() -> None:
+    # #24 y #26: un salto en la serie tiene que poder persistirse (por el mismo canal que los
+    # eventos de los analizadores) y el resumen de la ejecucion tiene que decir cuantas
+    # veces se cayo la fuente y cuando fue la ultima.
+    sink = FakeSink()
+    stats = runner(source=FuenteQueCuentaDeSiMisma(frames=3), sinks=(sink,)).run()
+
+    (escritura,) = sink.escrituras
+    evento = escritura[2].events[0]
+    assert (evento.analyzer, evento.name, evento.attributes["jump_s"]) == (
+        "source",
+        "reanchor",
+        120,
+    )
+    assert (stats.reconnections, stats.reanchors, stats.source_max_lag_s) == (3, 1, 42.5)
+    assert stats.as_dict()["last_reconnection_at"] == "2026-08-23T12:07:00+00:00"
+    resumen = stats.summary()
+    assert (
+        "reconexiones de la fuente (caidas recuperadas): 3, la ultima a las 2026-08-23" in resumen
+    )
+    assert "re-anclajes del tiempo de video: 1, retraso maximo de la fuente 42.5 s" in resumen
+    # Lo de antes no se confunde con esto: son intentos de abrir, no caidas.
+    assert "reintentos al abrir la fuente (arranque, no son caidas): 0" in resumen
+
+
+def test_una_fuente_sin_gancho_de_estadisticas_deja_los_contadores_en_cero() -> None:
+    stats = runner(source=FakeSource(frames=3), sinks=(FakeSink(),)).run()
+    assert (stats.reconnections, stats.last_reconnection_at, stats.reanchors) == (0, None, 0)
 
 
 def test_run_project_construye_corre_y_devuelve_los_contadores(tmp_path: Path) -> None:

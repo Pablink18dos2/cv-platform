@@ -12,14 +12,17 @@ que fijar. Todo lo de aqui es instantaneo.
 from __future__ import annotations
 
 import logging
+import re
 import threading
 from datetime import UTC, datetime, timedelta
 
 import numpy as np
 import pytest
 
+from cvp.core import Event
 from cvp.sources.errors import SourceError
 from cvp.sources.live import (
+    AVISO_CADA_S,
     DRENAJE_EN_VENTANAS,
     RecentFrameBuffer,
     VideoTimeline,
@@ -61,10 +64,16 @@ def _linea(
     *,
     reloj: RelojFalso | None = None,
     max_drift_s: float = 30.0,
+    eventos: list[Event] | None = None,
 ) -> tuple[VideoTimeline, RelojFalso]:
     reloj = reloj if reloj is not None else RelojFalso()
     linea = VideoTimeline(
-        target_fps, native_fps, clock=reloj, max_drift_s=max_drift_s, nombre="fuente"
+        target_fps,
+        native_fps,
+        clock=reloj,
+        max_drift_s=max_drift_s,
+        nombre="fuente",
+        al_reanclar=None if eventos is None else eventos.append,
     )
     linea.anclar("apertura")
     return linea, reloj
@@ -202,18 +211,132 @@ def test_una_deriva_por_debajo_del_umbral_no_toca_nada(
     assert caplog.text == ""
 
 
-def test_ir_por_delante_del_reloj_avisa_una_sola_vez_y_no_retrocede(
+def test_ir_por_delante_del_reloj_no_retrocede_y_avisa_periodicamente(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     # Pasa al arrancar, cuando el decodificador vacia de golpe el buffer del transporte.
-    # Re-anclar hacia atras congelaria la serie, asi que solo se avisa.
-    linea, _ = _linea(max_drift_s=30)
+    # Re-anclar hacia atras congelaria la serie, asi que solo se avisa. #26: antes se
+    # avisaba una sola vez por epoca, y QA midio 60 minutos de adelanto con un unico
+    # WARNING. Ahora se repite cada `AVISO_CADA_S` mientras dure, con el valor de ese momento.
+    linea, reloj = _linea(max_drift_s=30)
     with caplog.at_level(logging.WARNING):
         marcas = [marca for _, marca in _seleccionados(linea, 3000)]
+        # Mismo instante de reloj: el primer aviso ya salio, el segundo todavia no toca.
+        assert caplog.text.count("por delante del reloj") == 1
+        reloj.avanzar(AVISO_CADA_S + 1)
+        marcas += [marca for _, marca in _seleccionados(linea, 60)]
     assert marcas == sorted(marcas)
     assert len(set(marcas)) == len(marcas)
-    assert marcas[-1] == INICIO + timedelta(seconds=2994 / 30)
-    assert caplog.text.count("por delante del reloj") == 1
+    assert caplog.text.count("por delante del reloj") == 2
+    # Cada aviso lleva el adelanto de ese momento: 30 s al cruzar el umbral y 39 s un
+    # minuto despues (el video lleva 100 s y el reloj 61), no repite el primero.
+    assert re.findall(r"va (\d+) s por delante", caplog.text) == ["30", "39"]
+
+
+def test_el_reanclaje_por_deriva_queda_como_evento_con_el_salto(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    eventos: list[Event] = []
+    linea, reloj = _linea(max_drift_s=30, eventos=eventos)
+    linea.muestrear()
+    assert eventos == [], "abrir no es un salto: aun no hay serie que partir"
+    reloj.avanzar(120)
+
+    with caplog.at_level(logging.WARNING):
+        marca = next(m for m in (linea.muestrear() for _ in range(6)) if m is not None)
+
+    (evento,) = eventos
+    assert (evento.analyzer, evento.name) == ("source", "reanchor")
+    # El evento cae donde se ve el escalon: en el primer instante de la epoca nueva.
+    assert evento.timestamp == marca == INICIO + timedelta(seconds=120)
+    assert evento.attributes["reason"] == "deriva"
+    assert evento.attributes["jump_s"] == pytest.approx(120, abs=1)
+    assert evento.attributes["ahead_s"] == 0
+
+
+def test_una_reconexion_con_el_video_por_delante_no_hereda_el_adelanto_en_silencio(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # #26: "una reconexion hereda el adelanto intacto (600 s antes, 600 s despues)". No se
+    # puede corregir -no se retrocede-, pero tiene que quedar dicho, en evento y en log.
+    eventos: list[Event] = []
+    linea, _ = _linea(max_drift_s=30, eventos=eventos)
+    _seleccionados(linea, 3000)  # 100 s de video con el reloj parado
+
+    with caplog.at_level(logging.WARNING):
+        linea.anclar("reconexion")
+
+    (evento,) = eventos
+    assert evento.attributes["reason"] == "reconexion"
+    assert evento.attributes["ahead_s"] == pytest.approx(100, abs=1)
+    assert "se hereda" in caplog.text
+
+
+# --- La latencia real, no la etiqueta ---------------------------------------------------
+
+
+def test_el_retraso_se_mide_con_el_pts_del_stream_y_no_con_la_etiqueta() -> None:
+    linea, reloj = _linea()
+    marca = linea.muestrear()
+    assert marca is not None
+    assert linea.medir_retraso(5.0, marca) == 0  # la referencia: el primer fotograma
+    # Pasan 100 s de reloj pero el stream solo ha avanzado 2: el decodificador va 98 s tarde.
+    reloj.avanzar(100)
+    assert linea.medir_retraso(7.0, marca) == pytest.approx(98)
+
+
+def test_re_anclar_no_borra_el_retraso_medido(caplog: pytest.LogCaptureFixture) -> None:
+    # El fallo de fondo de #26: el guardarrail re-etiquetaba el fotograma viejo con la hora
+    # de ahora, y el unico sintoma desaparecia. La etiqueta vuelve a tener deriva 0, pero el
+    # retraso medido contra el stream sigue siendo el que es.
+    linea, reloj = _linea(max_drift_s=30)
+    marca = linea.muestrear()
+    assert marca is not None
+    linea.medir_retraso(5.0, marca)
+    reloj.avanzar(120)
+    marca = next(m for m in (linea.muestrear() for _ in range(6)) if m is not None)
+    assert marca == INICIO + timedelta(seconds=120)  # re-anclado: la etiqueta dice "ahora"
+
+    with caplog.at_level(logging.WARNING):
+        retraso = linea.medir_retraso(6.0, marca)
+
+    assert retraso == pytest.approx(119)
+    assert "por detras del borde en vivo" in caplog.text
+
+
+def test_el_aviso_de_retraso_se_repite_mientras_dure_y_no_a_cada_fotograma(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    linea, reloj = _linea(max_drift_s=30)
+    marca = linea.muestrear()
+    assert marca is not None
+    linea.medir_retraso(5.0, marca)
+    reloj.avanzar(100)
+    with caplog.at_level(logging.WARNING):
+        for pts in (5.1, 5.2, 5.3):
+            linea.medir_retraso(pts, marca)
+        assert caplog.text.count("borde en vivo") == 1
+        reloj.avanzar(AVISO_CADA_S + 1)
+        linea.medir_retraso(5.4, marca)
+    assert caplog.text.count("borde en vivo") == 2
+
+
+def test_sin_pts_el_retraso_cae_a_la_deriva_de_la_etiqueta() -> None:
+    linea, reloj = _linea()
+    marca = linea.muestrear()
+    assert marca is not None
+    reloj.avanzar(7)
+    assert linea.medir_retraso(0.0, marca) == pytest.approx(7)  # OpenCV devuelve 0 sin PTS
+    assert linea.medir_retraso(None, marca) == pytest.approx(7)
+
+
+def test_sin_pts_re_anclar_tampoco_borra_el_retraso() -> None:
+    linea, reloj = _linea(max_drift_s=30)
+    linea.muestrear()
+    reloj.avanzar(120)
+    marca = next(m for m in (linea.muestrear() for _ in range(6)) if m is not None)
+    assert marca == INICIO + timedelta(seconds=120)  # la etiqueta vuelve a decir "ahora"
+    assert linea.medir_retraso(None, marca) == pytest.approx(120, abs=1)
 
 
 # --- El muestreo se ajusta a lo que el consumidor sostiene -----------------------------

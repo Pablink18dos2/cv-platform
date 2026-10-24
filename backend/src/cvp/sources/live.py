@@ -42,7 +42,7 @@ from typing import Any, NamedTuple
 import cv2
 import numpy as np
 
-from cvp.core import Frame, SourceInfo
+from cvp.core import AnalyzerOutput, Event, Frame, Metric, SourceInfo
 from cvp.sources.errors import SourceError
 
 __all__ = ["LiveVideoSource", "RecentFrameBuffer", "Snapshot", "VideoTimeline"]
@@ -111,12 +111,40 @@ DRENAJE_EN_VENTANAS = 4.0
 HOLGURA_DE_CONSUMO = 0.9
 BAJADA_MAXIMA = 0.85
 
+# Cada cuanto (de reloj) se repite el aviso de que el retraso o el adelanto siguen por
+# encima de `max_drift_s`. Un aviso unico para una condicion que dura horas no informa: a
+# las dos horas nadie sabe si el desfase son dos segundos o una hora. Una vez por minuto
+# deja el valor actual en el log sin inundarlo.
+AVISO_CADA_S = 60.0
+
+# Cada cuanto (de reloj) la fuente ofrece al runner una muestra de la latencia del
+# fotograma que se analiza. Es la metrica continua de #26: sin ella, un retraso que crece
+# despacio solo se ve cuando ya ha provocado un re-anclaje.
+METRICA_CADA_S = 10.0
+
+# Con que `analyzer` y `name` sale lo que la fuente cuenta de si misma. La fuente no es un
+# analizador, pero los sinks y la API ya persisten y sirven eventos y metricas por esa
+# clave, asi que es el canal que #9 y #12 ya conocen y no hace falta otro.
+ANALIZADOR_FUENTE = "source"
+EVENTO_REANCLAJE = "reanchor"
+METRICA_LATENCIA = "source_latency_s"
+
+# Cuantos eventos pendientes de recoger guarda la fuente. Un runner los recoge en cada
+# fotograma; el tope existe para que una fuente que nadie drena (un script, un test) no
+# crezca sin limite durante dias.
+EVENTOS_PENDIENTES_MAX = 1000
+
 
 class Snapshot(NamedTuple):
     """Un fotograma **seleccionado**, con el instante del video al que corresponde."""
 
     image: np.ndarray
     timestamp: datetime
+    # Cuando se leyo y cuanto se separaba ya entonces del borde en vivo. Con ellos el
+    # consumidor dice la latencia **total** del fotograma que analiza: la que traia del
+    # decodificador mas lo que ha esperado en el buffer.
+    leido_a: datetime | None = None
+    retraso_s: float = 0.0
 
 
 class VideoTimeline:
@@ -138,8 +166,10 @@ class VideoTimeline:
 
     - **La deriva.** Si el decodificador no sostiene el ritmo del directo, `n / native_fps`
       se queda cada vez mas por detras del reloj y los timestamps acabarian diciendo las
-      12:00 cuando son las 12:40. Pasado `max_drift_s` se re-ancla y se deja dicho en el
-      log, porque un re-anclaje es un salto en la serie temporal.
+      12:00 cuando son las 12:40. Pasado `max_drift_s` se re-ancla, y como un re-anclaje
+      es un salto en la serie temporal no basta con el log: queda como `Event` con el
+      salto en segundos (#26). Re-anclar arregla la etiqueta, no el retraso, asi que ademas
+      se mide la latencia real (`medir_retraso`) y se avisa **cada minuto** mientras dure.
     - **`native_fps` desconocido.** Un HLS puede no declararlo (`SourceInfo.native_fps=None`,
       contemplado en #2). Sin fps nativos no hay tiempo de video que derivar, y estimarlo de
       lo que tarda en llegar seria peor que no hacerlo: sobre un transporte a rafagas se
@@ -155,6 +185,7 @@ class VideoTimeline:
         clock: Callable[[], datetime],
         max_drift_s: float = MAX_DERIVA_S,
         nombre: str = "directo",
+        al_reanclar: Callable[[Event], object] | None = None,
     ) -> None:
         if target_fps <= 0:
             raise ValueError(f"target_fps debe ser > 0, no {target_fps!r}")
@@ -167,13 +198,22 @@ class VideoTimeline:
         self.max_drift_s = float(max_drift_s)
         self._clock = clock
         self._nombre = nombre
+        self._al_reanclar = al_reanclar
         self._tasa = self.target_fps
         self._periodo = timedelta(seconds=1.0 / self.target_fps)
         self._ancla: datetime | None = None
         self._decodificados = 0
         self._ultimo: datetime | None = None
         self._proximo: datetime | None = None
-        self._aviso_de_adelanto = False
+        self._avisos: dict[str, datetime] = {}
+        # Reloj y PTS del primer fotograma de la captura actual: la referencia contra la
+        # que `medir_retraso` ve si el stream avanza mas despacio que el reloj.
+        self._base_reloj: datetime | None = None
+        self._base_pts: float | None = None
+        self._ultimo_pts: float | None = None
+        # Lo que los re-anclajes por deriva han "perdonado" a la etiqueta desde que se abrio
+        # la captura. Sin PTS es lo unico que impide que re-anclar borre el retraso medido.
+        self._absorbido_s = 0.0
         self._seleccionados = 0
         self._inicio_de_ventana: datetime | None = None
         self._tomados_al_abrir = 0
@@ -193,24 +233,120 @@ class VideoTimeline:
         """El instante del ultimo fotograma seleccionado, o `None` si no hay ninguno."""
         return self._ultimo
 
-    def anclar(self, motivo: str) -> None:
+    def anclar(self, motivo: str, *, captura_nueva: bool = True) -> None:
         """Ata el tiempo de video al reloj de pared. Al abrir y en **cada** reconexion.
 
         Nunca ancla hacia atras. Retroceder no serviria de nada: los timestamps que ya han
         salido tienen que seguir creciendo, asi que el analisis se quedaria congelado
-        repitiendo el mismo instante hasta que el video volviera a alcanzarlo.
+        repitiendo el mismo instante hasta que el video volviera a alcanzarlo. La
+        consecuencia es que **un adelanto no se corrige**: una reconexion con el video
+        600 s por delante arranca otra vez 600 s por delante. No se puede arreglar, pero
+        tampoco se hereda en silencio: el evento lo lleva en `ahead_s`.
+
+        `captura_nueva` es `False` solo en el re-anclaje por deriva, que sigue leyendo de
+        la misma captura: el PTS de referencia de `medir_retraso` no se toca, porque el
+        retraso del decodificador sigue siendo el mismo aunque la etiqueta se haya movido.
         """
         ahora = self._clock()
         ancla = ahora
         if self._ultimo is not None and ancla <= self._ultimo:
             ancla = self._ultimo + self._periodo
+        # Donde estaria ahora el fotograma de seguir con el ancla vieja: lo que separa a
+        # ese instante del nuevo es el escalon que ve quien mire la serie.
+        esperado = None
+        if self._ancla is not None and self.native_fps is not None:
+            esperado = self._ancla + timedelta(seconds=self._decodificados / self.native_fps)
         self._ancla = ancla
         self._decodificados = 0
         # La rejilla de muestreo se recoloca sobre el ancla nueva: el primer fotograma que
         # llegue detras de una caida sale, en vez de esperar a cuadrar con la rejilla vieja.
         self._proximo = None
-        self._aviso_de_adelanto = False
+        self._avisos.clear()
+        if captura_nueva:
+            self._base_reloj = self._base_pts = self._ultimo_pts = None
+            self._absorbido_s = 0.0
         _log.info("%s: tiempo de video anclado a %s (%s)", self._nombre, ancla.isoformat(), motivo)
+        if esperado is not None and self._ultimo is not None:
+            self._anotar_reanclaje(motivo, ancla, (ancla - esperado).total_seconds(), ahora)
+
+    def _anotar_reanclaje(
+        self, motivo: str, ancla: datetime, salto_s: float, ahora: datetime
+    ) -> None:
+        """Deja el re-anclaje como `Event` y, si arrastra un adelanto, lo dice."""
+        adelanto_s = max((ancla - ahora).total_seconds(), 0.0)
+        if adelanto_s > self.max_drift_s:
+            _log.warning(
+                "%s: tras el re-anclaje (%s) el tiempo de video sigue %.0f s por delante del "
+                "reloj; no se puede retroceder, asi que el adelanto se hereda",
+                self._nombre,
+                motivo,
+                adelanto_s,
+            )
+        if self._al_reanclar is not None:
+            self._al_reanclar(
+                Event(
+                    analyzer=ANALIZADOR_FUENTE,
+                    name=EVENTO_REANCLAJE,
+                    timestamp=ancla,
+                    attributes={
+                        "reason": motivo,
+                        "jump_s": round(salto_s, 3),
+                        "ahead_s": round(adelanto_s, 3),
+                    },
+                )
+            )
+
+    def medir_retraso(self, pts_s: float | None, marca: datetime) -> float:
+        """Cuanto se separa el fotograma que sale del borde en vivo, en segundos.
+
+        Positivo es por detras. **No es la deriva de la etiqueta** (`ahora - marca`), que
+        es el reloj que hemos derivado nosotros y se borra al re-anclar: es cuanto menos ha
+        avanzado el stream (su PTS, `CAP_PROP_POS_MSEC`) que el reloj de pared desde que se
+        abrio la captura. Medido contra un HLS en directo con un consumidor lento, es lo
+        que cuenta lo que se acumula dentro del decodificador y la etiqueta no ve.
+
+        Es relativo a la apertura de la captura: OpenCV no expone el borde del directo, asi
+        que la latencia propia del HLS (varios segmentos) queda fuera. Sin PTS valido
+        -webcam, backend que devuelve 0- se cae a la deriva de la etiqueta mas lo que los
+        re-anclajes por deriva le han absorbido, para que re-anclar no la borre.
+        """
+        ahora = self._clock()
+        valido = (
+            pts_s is not None
+            and math.isfinite(pts_s)
+            and pts_s > 0
+            and (self._ultimo_pts is None or pts_s >= self._ultimo_pts)
+        )
+        if valido:
+            assert pts_s is not None
+            self._ultimo_pts = pts_s
+            if self._base_pts is None or self._base_reloj is None:
+                self._base_pts, self._base_reloj = pts_s, ahora
+            retraso = (ahora - self._base_reloj).total_seconds() - (pts_s - self._base_pts)
+        else:
+            retraso = (ahora - marca).total_seconds() + self._absorbido_s
+        # Solo el retraso avisa aqui; el adelanto ya tiene su propio aviso periodico en
+        # `_vigilar_deriva`, y repetirlo con otro nombre solo duplicaria la linea.
+        if retraso > self.max_drift_s:
+            self._avisar_cada_tanto(
+                "retraso",
+                "%s: el fotograma que se analiza va %.0f s por detras del borde en vivo "
+                "(mas de los %.0f s de margen): el decodificador no sostiene el ritmo "
+                "del directo",
+                self._nombre,
+                retraso,
+                self.max_drift_s,
+            )
+        return retraso
+
+    def _avisar_cada_tanto(self, clave: str, texto: str, *args: object) -> None:
+        """WARNING como mucho una vez cada `AVISO_CADA_S`, y la primera vez en cuanto toca."""
+        ahora = self._clock()
+        previo = self._avisos.get(clave)
+        if previo is not None and (ahora - previo).total_seconds() < AVISO_CADA_S:
+            return
+        self._avisos[clave] = ahora
+        _log.warning(texto, *args)
 
     def muestrear(self) -> datetime | None:
         """Un fotograma decodificado. Devuelve su instante si toca emitirlo, o `None`.
@@ -353,23 +489,27 @@ class VideoTimeline:
         if deriva > self.max_drift_s:
             _log.warning(
                 "%s: el tiempo de video iba %.0f s por detras del reloj, mas de los %.0f s "
-                "de margen; se re-ancla, asi que habra un salto en la serie temporal",
+                "de margen; se re-ancla, asi que habra un salto en la serie temporal (queda "
+                "como evento %s)",
                 self._nombre,
                 deriva,
                 self.max_drift_s,
+                EVENTO_REANCLAJE,
             )
-            self.anclar(f"deriva de {deriva:.0f} s")
+            self._absorbido_s += deriva
+            self.anclar("deriva", captura_nueva=False)
             # Este fotograma es ya el primero de la epoca nueva.
             self._decodificados = 1
             assert self._ancla is not None
             return self._ancla
-        if -deriva > self.max_drift_s and not self._aviso_de_adelanto:
-            # No se re-ancla hacia atras (ver `anclar`). Se avisa una vez por epoca: la
-            # causa habitual es que el decodificador vacie de golpe el buffer del
-            # transporte al arrancar, y entonces el desfase se queda quieto y es
-            # indistinguible de la latencia que ya trae el propio directo.
-            self._aviso_de_adelanto = True
-            _log.warning(
+        if -deriva > self.max_drift_s:
+            # No se re-ancla hacia atras (ver `anclar`). La causa habitual es que el
+            # decodificador vacie de golpe el buffer del transporte al arrancar, y entonces
+            # el desfase se queda quieto y es indistinguible de la latencia que ya trae el
+            # propio directo. Se repite cada minuto: un aviso unico para algo que dura
+            # horas dejaba, a las dos horas, sin saber si eran dos segundos o una hora.
+            self._avisar_cada_tanto(
+                "adelanto",
                 "%s: el tiempo de video va %.0f s por delante del reloj; no se re-ancla "
                 "hacia atras porque los timestamps no pueden retroceder",
                 self._nombre,
@@ -431,7 +571,14 @@ class RecentFrameBuffer:
         with self._condicion:
             return len(self._cola)
 
-    def publicar(self, imagen: np.ndarray, marca: datetime) -> bool:
+    def publicar(
+        self,
+        imagen: np.ndarray,
+        marca: datetime,
+        *,
+        leido_a: datetime | None = None,
+        retraso_s: float = 0.0,
+    ) -> bool:
         """Encola un fotograma. Devuelve `True` si ha habido que descartar el mas antiguo.
 
         El tope es **tiempo de video**, no un numero de fotogramas: lo que hay que acotar
@@ -443,7 +590,7 @@ class RecentFrameBuffer:
         with self._condicion:
             if self._cerrada:
                 return False
-            self._cola.append(Snapshot(imagen, marca))
+            self._cola.append(Snapshot(imagen, marca, leido_a, retraso_s))
             descarto = False
             while len(self._cola) > 1 and self._cola[-1].timestamp - self._cola[0].timestamp > (
                 self._ventana
@@ -568,6 +715,22 @@ class LiveVideoSource:
         # que es el contrato de #2 y lo que hace que `every_n_frames` siga significando lo
         # mismo despues de una caida.
         self._indice = 0
+        # Lo que la fuente cuenta de si misma (#24, #26). Lo escribe el hilo lector o el
+        # consumidor, y lo lee el runner: enteros y referencias, asi que bastan las
+        # asignaciones atomicas de Python; los eventos viajan por una `deque`.
+        #
+        # `reconnections` cuenta las caidas **de las que la fuente se ha recuperado**, no
+        # los intentos de abrir al arrancar (eso es `RunStats.startup_retries`) ni las
+        # renovaciones programadas de la URL, que no son una caida.
+        self.reconnections = 0
+        self.last_reconnection_at: datetime | None = None
+        self.reanchors = 0
+        self.max_latency_s = 0.0
+        self.internal_buffer_bounded: bool | None = None
+        self._pendientes: deque[Event] = deque(maxlen=EVENTOS_PENDIENTES_MAX)
+        self._latencia_s: float | None = None
+        self._marca_de_latencia: datetime | None = None
+        self._ultima_metrica: datetime | None = None
 
     # --- Contrato de `VideoSource` ----------------------------------------------------
 
@@ -597,8 +760,10 @@ class LiveVideoSource:
             clock=self._clock,
             max_drift_s=self.max_drift_s,
             nombre=self._descripcion(),
+            al_reanclar=self._registrar_reanclaje,
         )
         linea.anclar("apertura")
+        self._acotar_buffer_interno(captura)
         buffer = RecentFrameBuffer(self.max_backlog_s)
         self._linea = linea
         self._buffer = buffer
@@ -637,6 +802,68 @@ class LiveVideoSource:
                     ESPERA_DE_CIERRE_S,
                 )
             self._hilo = None
+
+    def drain_output(self) -> AnalyzerOutput:
+        """Lo que la fuente tiene que contar desde la ultima vez: re-anclajes y latencia.
+
+        Es un gancho **opcional** que el runner usa si existe (`getattr`): `VideoSource`
+        no lo exige, porque un fichero no tiene reconexiones ni retraso que contar. Los
+        eventos son los re-anclajes pendientes; la metrica es la latencia del ultimo
+        fotograma entregado, como mucho una vez cada `METRICA_CADA_S`.
+        """
+        eventos = []
+        while self._pendientes:
+            try:
+                eventos.append(self._pendientes.popleft())
+            except IndexError:  # pragma: no cover - solo si dos hilos drenan a la vez
+                break
+        metricas = []
+        ahora = self._clock()
+        if (
+            self._latencia_s is not None
+            and self._marca_de_latencia is not None
+            and (
+                self._ultima_metrica is None
+                or (ahora - self._ultima_metrica).total_seconds() >= METRICA_CADA_S
+            )
+        ):
+            self._ultima_metrica = ahora
+            metricas.append(
+                Metric(
+                    analyzer=ANALIZADOR_FUENTE,
+                    name=METRICA_LATENCIA,
+                    value=self._latencia_s,
+                    timestamp=self._marca_de_latencia,
+                )
+            )
+        return AnalyzerOutput(events=eventos, metrics=metricas)
+
+    def _registrar_reanclaje(self, evento: Event) -> None:
+        self.reanchors += 1
+        self._pendientes.append(evento)
+
+    def _acotar_buffer_interno(self, captura: Any) -> None:
+        """Intenta que el decodificador no acumule fotogramas, y **comprueba** que ha colado.
+
+        `CAP_PROP_BUFFERSIZE` es lo que OpenCV ofrece, pero no todos los backends lo
+        honran. Medido en #26 contra un HLS en directo con el backend FFMPEG (OpenCV 5.0):
+        `set()` devuelve `False`, `get()` devuelve -1 y un consumidor lento acumula el mismo
+        retraso con la propiedad puesta que sin ella. Por eso no se da por hecho: se
+        pregunta, se guarda el resultado en `internal_buffer_bounded` y, si no hay tope, se
+        dice una vez. Lo que acota el retraso entonces no es esto sino lo que se mide
+        (`medir_retraso`) y se avisa.
+        """
+        acotado = bool(captura.set(cv2.CAP_PROP_BUFFERSIZE, 1)) and (
+            captura.get(cv2.CAP_PROP_BUFFERSIZE) == 1
+        )
+        if self.internal_buffer_bounded is None and not acotado:
+            _log.warning(
+                "%s: el decodificador no admite acotar su buffer interno "
+                "(CAP_PROP_BUFFERSIZE); si no sostiene el ritmo del directo el retraso se "
+                "acumulara ahi dentro. No se puede evitar: se mide y se avisa",
+                self._descripcion(),
+            )
+        self.internal_buffer_bounded = acotado
 
     # --- Ganchos de las subclases -----------------------------------------------------
 
@@ -720,6 +947,9 @@ class LiveVideoSource:
                         # La captura nueva cuenta fotogramas desde cero, asi que el tiempo
                         # de video tiene que volver a atarse al reloj.
                         linea.anclar("reconexion")
+                        self._acotar_buffer_interno(captura)
+                        self.reconnections += 1
+                        self.last_reconnection_at = self._clock()
                     continue
 
                 if self._toca_renovar():
@@ -733,7 +963,8 @@ class LiveVideoSource:
                         motivo = f"la renovacion ha fallado ({exc})"
                         _log.warning("la renovacion de %s ha fallado: %s", self._descripcion(), exc)
                     else:
-                        linea.anclar("renovacion de la URL")
+                        linea.anclar("renovacion")
+                        self._acotar_buffer_interno(captura)
                     continue
 
                 if not captura.grab():
@@ -768,7 +999,11 @@ class LiveVideoSource:
                     self._soltar(captura)
                     captura = None
                     continue
-                if buffer.publicar(imagen, marca) and not aviso_de_descartes:
+                # El PTS lo da el decodificador, no nosotros: es lo que permite ver el
+                # retraso que la etiqueta `marca` esconde (ver `medir_retraso`).
+                retraso = linea.medir_retraso(captura.get(cv2.CAP_PROP_POS_MSEC) / 1000.0, marca)
+                publicado = buffer.publicar(imagen, marca, leido_a=self._clock(), retraso_s=retraso)
+                if publicado and not aviso_de_descartes:
                     aviso_de_descartes = True
                     _log.info(
                         "%s: el analisis no sostiene los %.1f fps pedidos, asi que se "
@@ -804,6 +1039,13 @@ class LiveVideoSource:
             instantanea = buffer.tomar()
             if instantanea is None:
                 return
+            if instantanea.leido_a is not None:
+                # Latencia **del fotograma que se va a analizar**: la que traia del
+                # decodificador mas lo que ha esperado en nuestro buffer.
+                espera = (self._clock() - instantanea.leido_a).total_seconds()
+                self._latencia_s = instantanea.retraso_s + espera
+                self._marca_de_latencia = instantanea.timestamp
+                self.max_latency_s = max(self.max_latency_s, self._latencia_s)
             yield Frame(
                 image=instantanea.image, index=self._indice, timestamp=instantanea.timestamp
             )

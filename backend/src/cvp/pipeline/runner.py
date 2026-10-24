@@ -140,7 +140,15 @@ class RunStats:
     # sirve para que una ejecucion corta parezca mucho mas lenta de lo que es.
     startup_s: float = 0.0
     ended_at: datetime | None = None
+    # Intentos de **abrir** la fuente al arrancar. No son caidas: las caidas son
+    # `reconnections` (#24).
     startup_retries: int = 0
+    # Lo que cuenta una fuente en directo de si misma, copiado en cada informe de salud y
+    # al terminar. Una fuente de fichero no tiene nada de esto y se queda en cero.
+    reconnections: int = 0
+    last_reconnection_at: datetime | None = None
+    reanchors: int = 0
+    source_max_lag_s: float = 0.0
     sink_writes: int = 0
     sink_errors: int = 0
     analyzer_calls: dict[str, int] = field(default_factory=dict)
@@ -178,6 +186,12 @@ class RunStats:
             "processing_s": round(self.processing_s, 2),
             "fps": round(self.fps, 2),
             "startup_retries": self.startup_retries,
+            "reconnections": self.reconnections,
+            "last_reconnection_at": (
+                self.last_reconnection_at.isoformat() if self.last_reconnection_at else None
+            ),
+            "reanchors": self.reanchors,
+            "source_max_lag_s": round(self.source_max_lag_s, 1),
             "sink_writes": self.sink_writes,
             "sink_errors": self.sink_errors,
             "analyzer_calls": dict(self.analyzer_calls),
@@ -193,7 +207,9 @@ class RunStats:
         return (
             f"salud {self.run_id}: {self.frames} fotogramas en {self.processing_s:.0f} s "
             f"= {self.fps:.2f} fps | {self.source} | {self.detector} | {self.tracker} | "
-            f"sinks {self.sink_writes} escrituras, {self.sink_errors} errores"
+            f"sinks {self.sink_writes} escrituras, {self.sink_errors} errores | "
+            f"fuente {self.reconnections} reconexion(es), {self.reanchors} re-anclaje(s), "
+            f"retraso max {self.source_max_lag_s:.1f} s"
         )
 
     def summary(self) -> str:
@@ -220,7 +236,16 @@ class RunStats:
                 f"({self.tracker.calls} llamadas)",
                 f"  analizadores:    {analizadores}",
                 f"  sinks:           {self.sink_writes} escrituras, {self.sink_errors} errores",
-                f"  reintentos de arranque: {self.startup_retries}",
+                f"  reintentos al abrir la fuente (arranque, no son caidas): "
+                f"{self.startup_retries}",
+                f"  reconexiones de la fuente (caidas recuperadas): {self.reconnections}"
+                + (
+                    f", la ultima a las {self.last_reconnection_at.isoformat()}"
+                    if self.last_reconnection_at
+                    else ""
+                ),
+                f"  re-anclajes del tiempo de video: {self.reanchors}, "
+                f"retraso maximo de la fuente {self.source_max_lag_s:.1f} s",
             ]
         )
 
@@ -359,6 +384,7 @@ class PipelineRunner:
                 if self._parada.is_set():
                     break
                 self._procesar(frame, roi)
+                self._recoger_de_la_fuente(frame)
                 self.stats.elapsed_s = self._timer() - inicio
                 if max_frames is not None and self.stats.frames >= max_frames:
                     _log.info("alcanzado --max-frames=%d", max_frames)
@@ -391,6 +417,7 @@ class PipelineRunner:
             # En el aborto tambien se intenta, porque cerrar suele costar milisegundos y
             # perder las escrituras por las prisas seria peor; si es el propio cierre el que
             # se cuelga, el tercer Ctrl+C ya no pasa por nuestro manejador y mata el proceso.
+            self._copiar_contadores_de_la_fuente()
             self._cerrar_fuente()
             self._flush_sinks()
         return self.stats
@@ -480,6 +507,31 @@ class PipelineRunner:
                 )
             else:
                 self.stats.sink_writes += 1
+
+    def _recoger_de_la_fuente(self, frame: Any) -> None:
+        """Lo que una fuente en directo tenga que contar va a los sinks como cualquier otro.
+
+        `drain_output` es un gancho **opcional** (`VideoSource` no lo exige): un fichero no
+        tiene re-anclajes ni retraso. Se usa `getattr` y no un `if tipo == "..."`, que es
+        lo que el registro por nombre existe para evitar. Los re-anclajes salen como
+        `Event` por el mismo canal que los de los analizadores (#26): un salto en la serie
+        temporal tiene que poder persistirse y servirse, no quedarse en una linea de log.
+        """
+        drenar = getattr(self._source, "drain_output", None)
+        if drenar is None:
+            return
+        salida = drenar()
+        self._copiar_contadores_de_la_fuente()
+        if salida.events or salida.metrics:
+            self._escribir(frame, salida)
+
+    def _copiar_contadores_de_la_fuente(self) -> None:
+        """Pasa a `RunStats` las reconexiones (#24) y el retraso de una fuente en directo."""
+        fuente, stats = self._source, self.stats
+        stats.reconnections = getattr(fuente, "reconnections", 0)
+        stats.last_reconnection_at = getattr(fuente, "last_reconnection_at", None)
+        stats.reanchors = getattr(fuente, "reanchors", 0)
+        stats.source_max_lag_s = getattr(fuente, "max_latency_s", 0.0)
 
     def _roi_en_pixeles(self) -> BBox | None:
         """Traduce el ROI de fracciones a pixeles **una sola vez**, ya con la resolucion.

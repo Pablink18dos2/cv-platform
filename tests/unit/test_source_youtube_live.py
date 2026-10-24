@@ -139,6 +139,8 @@ class CapturaFalsa:
         self._ancho = ancho
         self._alto = alto
         self._fps = fps
+        # El PTS que reporta, en segundos. `0` es lo que devuelve OpenCV cuando no lo hay.
+        self.pts_s = 0.0
 
     def isOpened(self) -> bool:  # noqa: N802 - la firma la impone OpenCV
         return True
@@ -150,7 +152,14 @@ class CapturaFalsa:
             cv2.CAP_PROP_FRAME_WIDTH: float(self._ancho),
             cv2.CAP_PROP_FRAME_HEIGHT: float(self._alto),
             cv2.CAP_PROP_FPS: float(self._fps),
+            cv2.CAP_PROP_POS_MSEC: self.pts_s * 1000.0,
+            # Lo que devuelve el backend FFMPEG con HLS, medido en #26.
+            cv2.CAP_PROP_BUFFERSIZE: -1.0,
         }[prop]
+
+    def set(self, prop: int, valor: float) -> bool:
+        """El backend FFMPEG no admite `CAP_PROP_BUFFERSIZE`: `set` devuelve `False`."""
+        return False
 
     def grab(self) -> bool:
         """Descodifica el siguiente, sin convertirlo. Es lo que el connector llama siempre."""
@@ -1066,6 +1075,133 @@ def test_cada_reconexion_deja_constancia_del_motivo_en_el_log(
     assert "reconectando" in caplog.text.lower()
     assert "el directo no responde" in caplog.text
     assert re.search(r"esperando 1[.,]0 s", caplog.text)
+
+
+# --- Lo que la fuente cuenta de si misma (#24 y #26) -----------------------------------
+
+
+def test_una_fuente_que_se_cae_n_veces_deja_el_contador_en_n() -> None:
+    # #24: el resumen de doce horas con quince reconexiones era identico al de ninguna.
+    # Tres caidas, y entre medias un intento de reabrir que falla: ese no cuenta, porque
+    # lo que se cuenta son las caidas **de las que la fuente se ha recuperado**.
+    reloj = RelojFalso()
+    fabrica = Fabrica(
+        CapturaFalsa(total=1),
+        lambda: CapturaFalsa(total=1),
+        SourceError("el directo no responde"),
+        lambda: CapturaFalsa(total=1),
+        CapturaFalsa,
+    )
+    origen = fuente(fabrica, reloj=reloj, backoff_s=[0.5])
+    assert (origen.reconnections, origen.last_reconnection_at) == (0, None)
+    with abierta(origen) as fuente_abierta:
+        fotogramas = fuente_abierta.frames()
+        for _ in range(4):
+            _siguiente(fotogramas)
+
+    assert origen.reconnections == 3
+    # Cuatro esperas de 0,5 s (tres caidas y un intento fallido) y la ultima reconexion
+    # es la cuarta: el instante que se pregunta uno al mirar un hueco en una grafica.
+    assert origen.last_reconnection_at == INICIO + timedelta(seconds=2.0)
+
+
+def test_la_renovacion_programada_de_la_url_no_es_una_caida() -> None:
+    reloj = RelojFalso()
+    resolvedor = Resolvedor()
+    origen = fuente(
+        Fabrica(CapturaFalsa), reloj=reloj, resolvedor=resolvedor, refresh_url_every_s=18000
+    )
+    with abierta(origen) as fuente_abierta:
+        fotogramas = fuente_abierta.frames()
+        _siguiente(fotogramas)
+        reloj.avanzar(18001)
+        assert resolvedor.esperar(2)
+        _siguiente(fotogramas)
+    assert origen.reconnections == 0
+    assert origen.last_reconnection_at is None
+
+
+def test_una_reconexion_con_adelanto_lo_deja_como_evento_y_en_el_log(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # #26: "una reconexion hereda el adelanto intacto". La primera captura entrega 60 s de
+    # video de golpe con el reloj parado; la segunda llega 1 s despues, asi que sigue 59 s
+    # por delante. No se puede retroceder, pero tiene que constar.
+    reloj = RelojFalso()
+    despues = CapturaGobernada()
+    origen = fuente(
+        Fabrica(CapturaFalsa(total=1800), despues),
+        target_fps=MUESTREO,
+        reloj=reloj,
+        backoff_s=[1.0],
+    )
+    with caplog.at_level(logging.WARNING), abierta(origen, despues) as fuente_abierta:
+        fotogramas = fuente_abierta.frames()
+        # La primera captura acaba en el instante 59,8 s del video; el primero de la
+        # segunda va un periodo (0,2 s) despues, en el 60,0.
+        despues.producir(1)
+        siguiente = _siguiente(fotogramas)
+        while siguiente.timestamp < INICIO + timedelta(seconds=60):
+            siguiente = _siguiente(fotogramas)
+
+    eventos = origen.drain_output().events
+    (evento,) = [e for e in eventos if e.attributes["reason"] == "reconexion"]
+    assert (evento.analyzer, evento.name) == ("source", "reanchor")
+    assert evento.attributes["ahead_s"] == pytest.approx(59, abs=0.5)
+    assert evento.attributes["jump_s"] == pytest.approx(0, abs=0.5)
+    assert "se hereda" in caplog.text
+    assert origen.reanchors == len(eventos)
+    assert origen.drain_output().events == (), "un evento se entrega una sola vez"
+
+
+def test_la_latencia_del_fotograma_analizado_sale_como_metrica_continua(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # El decodificador no sostiene el ritmo: pasan 100 s de reloj y su PTS solo avanza 2.
+    # La etiqueta del fotograma dice "ahora" (sin guardarrail, la serie se vería perfecta),
+    # pero la metrica dice 98 s, mas los 5 s que el fotograma espera luego en nuestro
+    # buffer: la latencia **del fotograma que se analiza**.
+    reloj = RelojFalso()
+    captura = CapturaGobernada()
+    origen = fuente(Fabrica(captura), reloj=reloj)
+    with caplog.at_level(logging.WARNING), abierta(origen, captura):
+        fotogramas = origen.frames()
+        captura.pts_s = 5.0
+        captura.producir(1)
+        _siguiente(fotogramas)
+        reloj.avanzar(100)
+        captura.pts_s = 7.0
+        captura.producir(1)
+        reloj.avanzar(5)
+        _siguiente(fotogramas)
+
+        (metrica,) = origen.drain_output().metrics
+        assert (metrica.analyzer, metrica.name) == ("source", "source_latency_s")
+        assert metrica.value == pytest.approx(103)
+        assert origen.max_latency_s == pytest.approx(103)
+        # Una muestra cada tanto, no una por fotograma.
+        assert origen.drain_output().metrics == ()
+        reloj.avanzar(11)
+        captura.pts_s = 7.5
+        captura.producir(1)
+        _siguiente(fotogramas)
+        assert len(origen.drain_output().metrics) == 1
+
+    assert "borde en vivo" in caplog.text
+
+
+def test_si_el_backend_no_acota_el_buffer_interno_lo_dice_una_vez(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # No se supone que CAP_PROP_BUFFERSIZE funcione: se pregunta. Con FFMPEG + HLS (#26)
+    # `set()` devuelve False y `get()` -1, y eso tiene que quedar dicho.
+    captura = CapturaGobernada()
+    origen = fuente(Fabrica(captura))
+    assert origen.internal_buffer_bounded is None
+    with caplog.at_level(logging.WARNING), abierta(origen, captura):
+        pass
+    assert origen.internal_buffer_bounded is False
+    assert caplog.text.count("no admite acotar su buffer interno") == 1
 
 
 # --- Los `Frame` que salen ------------------------------------------------------------

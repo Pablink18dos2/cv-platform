@@ -55,6 +55,15 @@ Reglas que valen para todas:
   cada vez más respecto a la realidad.
 - Una fuente en directo **nunca termina**: reconecta con backoff exponencial. Solo se rinde
   cuando lo dice la configuración, y deja constancia en el log.
+- Una fuente en directo **cuenta lo que le pasa**, aparte del contrato (#24, #26). Atributos
+  opcionales que el runner copia a `RunStats` si existen: `reconnections`,
+  `last_reconnection_at`, `reanchors`, `max_latency_s`. Y un gancho opcional
+  `drain_output() -> AnalyzerOutput` que el runner llama tras cada fotograma y escribe en los
+  sinks: lleva un `Event` `source/reanchor` por cada salto de la serie temporal (`reason`,
+  `jump_s`, `ahead_s`) y la métrica `source/source_latency_s`, la latencia del fotograma que
+  se analiza. Un fichero no tiene nada de esto. Con OpenCV+FFMPEG+HLS `CAP_PROP_BUFFERSIZE`
+  **no acota** el buffer interno del decodificador (medido), así que el retraso se mide y se
+  avisa en vez de limitarse.
 - `youtube_live` resuelve la URL HLS con `yt-dlp` y **la vuelve a resolver cuando caduca**.
   Ver el riesgo 1 en [plan.md](plan.md).
 
