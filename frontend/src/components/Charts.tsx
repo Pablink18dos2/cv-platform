@@ -40,7 +40,7 @@ export function OccupancyChart({ rows }: { rows: GaugeRow[] }) {
         <XAxis dataKey="minute" tickFormatter={hhmm} tick={axis} minTickGap={48} />
         <YAxis allowDecimals={false} tick={axis} width={32} />
         <Tooltip labelFormatter={(l) => hhmm(String(l))} formatter={(v) => [v, "libres"]} />
-        <Line dataKey="value" stroke={COLORS[0]} dot={false} connectNulls={false} isAnimationActive={false} />
+        <Line dataKey="value" stroke={COLORS[0]} dot={rows.filter((r) => r.value !== null).length <= 120} connectNulls={false} isAnimationActive={false} />
       </LineChart>
     </Frame>
   );
