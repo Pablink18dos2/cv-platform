@@ -39,10 +39,27 @@ calle llena). 9 a la derecha (`der-1` lejana a `der-9` cercana) y 2 a la izquier
 - Un track oculto más de ~1 s (el tracker lo pierde a 5 fps) recibe otra identidad: puede perderse
   un cruce, no duplicarse.
 
+## Ejecución de 30 minutos (2026-10-24, 17:15–17:45 UTC, tarde soleada)
+
+- Estabilidad: 7150 fotogramas, 3,99 fps de salida (detector p50 162 ms, p95 410 ms), 0 errores
+  de sinks, 0 reconexiones, 0 reintentos de arranque. El muestreo adaptativo se mantuvo entre
+  ~3 y 5 fps sin perder bloques.
+- Ocupación: 2–4 libres de 11 (media 2,7), 15 cambios de estado en 30 min, casi todos en `der-3`
+  (el borde de la fila, donde un coche que pasa lo ocupa y lo libera). El último preview se
+  comparó a ojo con la métrica: 3 libres (`der-1`, `der-2`, `der-3`), coincide con lo que se ve.
+  Dudosa: `der-1`/`der-2` tienen una sombra oscura dentro que podría ser un coche parcialmente
+  visible.
+- Tráfico: 482 cruces de la línea `calzada` (250 `hacia_camara`, 232 `hacia_fondo`, ~16/min),
+  repartidos de forma simétrica. **No se ha contado a mano**: es plausible, no verificado.
+- Guardián de encuadre: `framing_score` medio 0,81, sin `framing_lost`. Hubo muestras sueltas
+  a 0,0 (17:25, 17:32, 17:33) sin explicación comprobada; el guardián no saltó porque exige 30 s
+  seguidos por debajo del umbral.
+
 ## Qué falta por verificar
 
 - Precisión de ocupación frente a un recuento manual en varias horas del día (solo se han mirado unas
   pocas capturas).
 - Precisión de los conteos y del sentido frente a un recuento manual.
+- Las muestras de `framing_score` = 0,0: ver qué pasa en esos fotogramas (¿decodificación?).
 - Noche, lluvia y nieve.
-- La ejecución larga de 30 minutos (la hace el orquestador con la máquina libre).
+- Una serie de varias horas: no es fiable hasta #26 (deriva de tiempo del decodificador).
