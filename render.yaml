@@ -1,0 +1,11 @@
+# Blueprint de Render (plan free). Ver "Deployment" en el README.
+# Los despliegues los lanza el workflow `deploy` por el deploy hook, no un push a la rama.
+services:
+  - type: web
+    name: cv-platform
+    runtime: docker
+    dockerfilePath: docker/render.Dockerfile
+    dockerContext: .
+    plan: free
+    autoDeployTrigger: "off"
+    healthCheckPath: /api/v1/projects

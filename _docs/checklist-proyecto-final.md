@@ -18,8 +18,8 @@ current status of each one in this repository.
 | 5 | Application | 2 | Done |
 | 6 | Testing | 2 | Done |
 | 7 | Containerization | 2 | Done |
-| 8 | Deployment | 2 | Pending |
-| 9 | CI/CD | 3 | Partial (level 1 of 3) |
+| 8 | Deployment | 2 | Ready, pending first real deploy |
+| 9 | CI/CD | 3 | Level 2 of 3, pending first real deploy |
 | 10 | Observability | 2 | Pending |
 | 11 | Alerting on user impact | 1 | Pending |
 | 12 | On-call agent | 2 | Pending |
@@ -81,18 +81,25 @@ with `docker compose up --build`.
 
 - [ ] A public URL, or a clear demo of the deployed system.
 
-Status: pending. Nothing is deployed yet; the platform is not yet chosen
-(the `deploy` job in `.github/workflows/ci.yml` is commented out).
+Status: ready, **pending first real deploy**. Render free tier (Docker), a single environment.
+It serves a light image (`docker/render.Dockerfile`, blueprint `render.yaml`) with the real
+dashboard and API over a recorded 30-minute run replayed in a loop (not live inference); the
+full image with the detector is `docker compose up`. The public URL goes here once the service
+exists.
 
 ### 9. CI/CD (0-3)
 
 - [x] Level 1: tests run on every pull request.
-- [ ] Level 2: level 1 plus automatic continuous delivery.
+- [x] Level 2: level 1 plus automatic continuous delivery (written; pending first real deploy).
 - [ ] Level 3: level 2 plus deployment to a dev environment and a manual deployment to production.
 
-Status: partial, level 1 only. `.github/workflows/ci.yml` runs on every push to `main` and on
-every pull request: ruff lint, ruff format check, `uv run pytest -m "not slow and not network"`,
-and for the front end `npm test` and `npm run build`. No deploy step exists yet.
+Status: level 2, pending first real deploy. `.github/workflows/ci.yml` runs on every push to
+`main` and on every pull request: ruff lint, ruff format check,
+`uv run pytest -m "not slow and not network"`, and for the front end `npm test` and
+`npm run build`. `.github/workflows/deploy.yml` runs when CI succeeds on `main` (or by hand, with
+a `ref` to roll back): it calls the Render deploy hook and smoke-tests `/api/v1/projects`. It
+needs the `RENDER_DEPLOY_HOOK` secret and the `RENDER_URL` variable. Level 3 is not planned: the
+free tier gives a single environment.
 
 ### 10. Observability (0-2)
 

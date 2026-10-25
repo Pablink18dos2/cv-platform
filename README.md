@@ -176,27 +176,44 @@ _docs/             specification, architecture and working guides
 
 ## Deployment
 
-The demo runs for free on [Hugging Face Spaces](https://huggingface.co/docs/hub/spaces-sdks-docker)
-(Docker SDK, CPU basic: 2 vCPU / 16 GB). One image ([`docker/space.Dockerfile`](docker/space.Dockerfile))
-runs nginx on port 7860 (dashboard + `/api` proxy), the API and one worker for
-`projects/00-demo`, with SQLite in the container's disk.
+The public demo runs for free on [Render](https://render.com) (free web service, Docker runtime:
+512 MB RAM, 0.1 CPU). The full image (torch + YOLO) does not fit in 512 MB, so Render runs a
+**light version**: the real dashboard and API plus **recorded data**, with no detector and no
+worker. The data is a real 30-minute run of `01-parking-trafico` (2026-10-24), exported to
+[`deploy/seed.sqlite3`](deploy/seed.sqlite3) by [`scripts/make_seed.py`](scripts/make_seed.py).
+[`scripts/replay_seed.py`](scripts/replay_seed.py) replays it in a loop: on start it loads the
+recorded minutes up to now, and every minute it inserts the next one with the current timestamp.
+**This is replayed recorded data, not live inference.** The snapshot is the last real annotated
+frame ([`deploy/seed-preview.jpg`](deploy/seed-preview.jpg)).
 
-- **Automatic**: [`deploy.yml`](.github/workflows/deploy.yml) deploys to the Space when the CI
-  workflow succeeds on `main`, behind the `production` environment.
-- **Manual and rollback**: *Run workflow* in the Actions tab. The optional `ref` input deploys
-  an older commit or tag, which is the rollback.
-- There is a single Space because a free Hugging Face account only allows one running Space at
-  a time, so there is no separate dev stage.
-- Each deploy uploads the repo to the Space, waits for it to be `RUNNING` and checks
-  `/api/v1/projects`.
+```
+Render $PORT -> nginx -> dashboard (Vite build) + /api -> uvicorn (cvp api) -> SQLite (/app/data)
+                                                           ^ replay_seed.py inserts one minute / min
+```
 
-Setup: a Hugging Face account, a write-access token as the `HF_TOKEN` repository secret, the
-repository variable `HF_SPACE_PROD` (format `owner/name`) and a `production` environment
-(Settings > Environments).
+One image, [`docker/render.Dockerfile`](docker/render.Dockerfile) (about 430 MB on disk, about
+80 MB of RAM at runtime), described by the [`render.yaml`](render.yaml) blueprint. The full image
+with the detector is the one in `compose.yaml` (`docker compose up --build`).
 
-Limitations: the disk is ephemeral (history is lost on every restart or deploy); the free
-Space sleeps after inactivity and takes a minute or two to wake; it runs the demo project
-(a looping video file), not the YouTube live stream, which needs the network and ffmpeg.
+- **Automatic**: [`deploy.yml`](.github/workflows/deploy.yml) calls the Render deploy hook with the
+  commit SHA when the CI workflow succeeds on `main`, behind the `production` environment, and then
+  smoke-tests `/api/v1/projects`. Auto-deploy on push is off in `render.yaml`, so the hook is the
+  only trigger.
+- **Rollback**: *Run workflow* in the Actions tab with the optional `ref` input (SHA, tag or
+  branch). The workflow resolves it to a full SHA and deploys that commit.
+- There is a single environment (Render free tier), so there is no separate dev stage.
+
+Setup:
+
+1. In Render: *New > Blueprint*, pick this repository (it reads `render.yaml`). Then, in the service
+   settings, copy the **Deploy Hook** URL (it includes `?key=...`).
+2. In GitHub (*Settings > Environments*): create the `production` environment.
+3. Add the secret `RENDER_DEPLOY_HOOK` (the hook URL) and the variable `RENDER_URL` (the public
+   service URL, without a trailing slash).
+
+Limitations: the free service sleeps after 15 minutes without traffic and takes about a minute to
+wake; the disk is ephemeral (the database is rebuilt from the seed on every start); there is no live
+inference, only the replayed recording; the YouTube live stream is not available there.
 
 ## Status
 

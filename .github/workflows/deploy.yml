@@ -1,12 +1,11 @@
-# CD a Hugging Face Spaces (SDK docker, CPU basic gratis). Ver "Deployment" en el README.
+# CD a Render (plan free). Ver "Deployment" en el README.
 #
-#   deploy-prod  automatico cuando CI termina bien en main; tambien a mano, y `ref` permite
-#                desplegar un commit o tag anterior (rollback).
+# Se dispara cuando CI termina bien en main, o a mano; `ref` permite desplegar un commit o tag
+# anterior (rollback). Llama al deploy hook de Render con el SHA a desplegar y comprueba que la
+# API responde.
 #
-# Solo hay un Space porque la cuenta gratuita de Hugging Face solo deja uno en marcha a la vez.
-#
-# Necesita: secret HF_TOKEN (token con permiso de escritura) y variable HF_SPACE_PROD con
-# formato `owner/nombre`.
+# Necesita: secret RENDER_DEPLOY_HOOK (URL completa del deploy hook, con su `?key=`) y variable RENDER_URL
+# (URL publica del servicio, sin barra final).
 
 name: Deploy
 
@@ -17,7 +16,7 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: "Commit, tag o rama a desplegar (vacio = la rama desde la que se lanza). Para rollback de prod."
+        description: "Commit, tag o rama a desplegar (vacio = la rama desde la que se lanza). Para rollback."
         type: string
         required: false
 
@@ -25,7 +24,7 @@ permissions:
   contents: read
 
 jobs:
-  deploy-prod:
+  deploy:
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'workflow_run'
@@ -33,43 +32,33 @@ jobs:
         && github.event.workflow_run.event == 'push'
         && github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     environment: production
     concurrency:
-      group: deploy-prod
+      group: deploy
       cancel-in-progress: false
     env:
-      HF_TOKEN: ${{ secrets.HF_TOKEN }}
-      SPACE: ${{ vars.HF_SPACE_PROD }}
+      RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+      RENDER_URL: ${{ vars.RENDER_URL }}
     steps:
+      - name: Check configuration
+        run: |
+          test -n "$RENDER_DEPLOY_HOOK" || { echo "::error::falta el secret RENDER_DEPLOY_HOOK"; exit 1; }
+          test -n "$RENDER_URL" || { echo "::error::falta la variable RENDER_URL"; exit 1; }
+
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha || inputs.ref || github.sha }}
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-
-      - name: Check configuration
+      - name: Trigger the Render deploy
         run: |
-          test -n "$HF_TOKEN" || { echo "::error::falta el secret HF_TOKEN"; exit 1; }
-          test -n "$SPACE" || { echo "::error::falta la variable HF_SPACE_PROD"; exit 1; }
-
-      - name: Prepare the Space directory
-        run: |
-          mkdir /tmp/space
-          git archive HEAD | tar -x -C /tmp/space
-          cp docker/space.Dockerfile /tmp/space/Dockerfile
-          cp docker/space-README.md /tmp/space/README.md
-          rm -f /tmp/space/.gitattributes
-
-      - name: Upload to the Space and wait for RUNNING
-        run: |
-          pip install --quiet "huggingface_hub==0.34.4"
-          python scripts/deploy_space.py "$SPACE" /tmp/space
+          # El hook de Render (su URL ya lleva `?key=`) acepta `&ref=<SHA completo>`; un tag o rama se resuelve antes.
+          sha=$(git rev-parse HEAD)
+          echo "Desplegando $sha"
+          curl --fail --silent --show-error --output /dev/null "${RENDER_DEPLOY_HOOK}&ref=${sha}"
 
       - name: Smoke test
         run: |
-          host=$(echo "$SPACE" | tr '[:upper:]' '[:lower:]' | tr '/_.' '---')
-          curl --fail --silent --show-error --retry 10 --retry-delay 15 --retry-all-errors \
-            "https://${host}.hf.space/api/v1/projects"
+          curl --fail --silent --show-error --output /dev/null \
+            --retry 20 --retry-delay 15 --retry-all-errors \
+            "${RENDER_URL}/api/v1/projects"

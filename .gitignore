@@ -27,6 +27,8 @@ out/
 # Databases locales
 *.sqlite3
 *.db
+# El seed del despliegue ligero (scripts/make_seed.py) si se versiona.
+!deploy/seed.sqlite3
 
 # Editores / OS
 .DS_Store
