@@ -1,0 +1,121 @@
+# CD a Hugging Face Spaces (SDK docker, CPU basic gratis). Ver "Deployment" en el README.
+#
+#   deploy-dev   automatico: cuando CI termina bien en main (o a mano).
+#   deploy-prod  solo a mano; `ref` permite desplegar un commit o tag anterior (rollback).
+#
+# Necesita: secret HF_TOKEN (token con permiso de escritura) y variables HF_SPACE_DEV y
+# HF_SPACE_PROD con formato `owner/nombre`.
+
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Solo para el despliegue manual: dev o prod"
+        type: choice
+        options: [dev, prod]
+        default: dev
+      ref:
+        description: "Commit, tag o rama a desplegar (vacio = la rama desde la que se lanza). Para rollback de prod."
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-dev:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.target == 'dev') ||
+      (github.event_name == 'workflow_run'
+        && github.event.workflow_run.conclusion == 'success'
+        && github.event.workflow_run.event == 'push'
+        && github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    concurrency:
+      group: deploy-dev
+      cancel-in-progress: false
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      SPACE: ${{ vars.HF_SPACE_DEV }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || inputs.ref || github.sha }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Check configuration
+        run: |
+          test -n "$HF_TOKEN" || { echo "::error::falta el secret HF_TOKEN"; exit 1; }
+          test -n "$SPACE" || { echo "::error::falta la variable HF_SPACE_DEV"; exit 1; }
+
+      - name: Prepare the Space directory
+        run: |
+          mkdir /tmp/space
+          git archive HEAD | tar -x -C /tmp/space
+          cp docker/space.Dockerfile /tmp/space/Dockerfile
+          cp docker/space-README.md /tmp/space/README.md
+          rm -f /tmp/space/.gitattributes
+
+      - name: Upload to the Space and wait for RUNNING
+        run: |
+          pip install --quiet "huggingface_hub==0.34.4"
+          python scripts/deploy_space.py "$SPACE" /tmp/space
+
+      - name: Smoke test
+        run: |
+          host=$(echo "$SPACE" | tr '[:upper:]' '[:lower:]' | tr '/_.' '---')
+          curl --fail --silent --show-error --retry 10 --retry-delay 15 --retry-all-errors \
+            "https://${host}.hf.space/api/v1/projects"
+
+  deploy-prod:
+    if: github.event_name == 'workflow_dispatch' && inputs.target == 'prod'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: production
+    concurrency:
+      group: deploy-prod
+      cancel-in-progress: false
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      SPACE: ${{ vars.HF_SPACE_PROD }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Check configuration
+        run: |
+          test -n "$HF_TOKEN" || { echo "::error::falta el secret HF_TOKEN"; exit 1; }
+          test -n "$SPACE" || { echo "::error::falta la variable HF_SPACE_PROD"; exit 1; }
+
+      - name: Prepare the Space directory
+        run: |
+          mkdir /tmp/space
+          git archive HEAD | tar -x -C /tmp/space
+          cp docker/space.Dockerfile /tmp/space/Dockerfile
+          cp docker/space-README.md /tmp/space/README.md
+          rm -f /tmp/space/.gitattributes
+
+      - name: Upload to the Space and wait for RUNNING
+        run: |
+          pip install --quiet "huggingface_hub==0.34.4"
+          python scripts/deploy_space.py "$SPACE" /tmp/space
+
+      - name: Smoke test
+        run: |
+          host=$(echo "$SPACE" | tr '[:upper:]' '[:lower:]' | tr '/_.' '---')
+          curl --fail --silent --show-error --retry 10 --retry-delay 15 --retry-all-errors \
+            "https://${host}.hf.space/api/v1/projects"

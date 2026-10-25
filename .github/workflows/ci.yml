@@ -49,15 +49,3 @@ jobs:
         working-directory: frontend
       - run: npm run build
         working-directory: frontend
-
-  # --- Despliegue: se activa cuando esté elegida la plataforma ---
-  # deploy:
-  #   needs: [backend, frontend]
-  #   if: github.ref == 'refs/heads/main'
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #     - name: Deploy
-  #       run: echo "Render / Fly.io / Hugging Face Spaces"
-  #       env:
-  #         DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}

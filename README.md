@@ -174,6 +174,28 @@ _docs/             specification, architecture and working guides
 | [`_docs/design-system.md`](_docs/design-system.md) | UI design system | Spanish |
 | [`_docs/rendimiento.md`](_docs/rendimiento.md) | Performance measurements | Spanish |
 
+## Deployment
+
+The demo runs for free on [Hugging Face Spaces](https://huggingface.co/docs/hub/spaces-sdks-docker)
+(Docker SDK, CPU basic: 2 vCPU / 16 GB). One image ([`docker/space.Dockerfile`](docker/space.Dockerfile))
+runs nginx on port 7860 (dashboard + `/api` proxy), the API and one worker for
+`projects/00-demo`, with SQLite in the container's disk.
+
+- **dev**: [`deploy.yml`](.github/workflows/deploy.yml) deploys to the dev Space automatically
+  when the CI workflow succeeds on `main` (or by hand: *Run workflow*, target `dev`).
+- **prod**: manual only (*Run workflow*, target `prod`), behind the `production` environment.
+  The optional `ref` input deploys an older commit or tag, which is the rollback.
+- Each deploy uploads the repo to the Space, waits for it to be `RUNNING` and checks
+  `/api/v1/projects`.
+
+Setup: a Hugging Face account, a write-access token as the `HF_TOKEN` repository secret, the
+repository variables `HF_SPACE_DEV` and `HF_SPACE_PROD` (format `owner/name`; the Spaces are
+created on the first deploy) and a `production` environment (Settings > Environments).
+
+Limitations: the disk is ephemeral (history is lost on every restart or deploy); the free
+Space sleeps after inactivity and takes a minute or two to wake; it runs the demo project
+(a looping video file), not the YouTube live stream, which needs the network and ffmpeg.
+
 ## Status
 
 Under construction. The backlog is in the GitHub issues; the initial history is in
