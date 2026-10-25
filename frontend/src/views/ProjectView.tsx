@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { getLastEvent, getLatest, getMetrics, getProject, type LatestPoint, type SeriesResponse } from "../api/client";
 import { Async, Notice } from "../components/Async";
 import { FlowChart, OccupancyChart } from "../components/Charts";
 import { Freshness } from "../components/Freshness";
 import { LiveImage } from "../components/LiveImage";
+import { ReplayPanel } from "../components/ReplayPanel";
 import {
   directionsOf,
   dominantDirection,
@@ -13,12 +14,50 @@ import {
   kpisOf,
   parkingText,
 } from "../lib/metrics";
+import { fetchTimeline, type Timeline } from "../lib/replay";
 import { usePolling, type Polled } from "../lib/usePolling";
 
 const WINDOWS = { "1 h": 1, "24 h": 24 } as const;
 type WindowLabel = keyof typeof WINDOWS;
 
+/** undefined mientras se consulta; null si el entorno no tiene replay (el resto de entornos devuelve 404). */
+function useDemoTimeline(): Timeline | null | undefined {
+  const [timeline, setTimeline] = useState<Timeline | null | undefined>(undefined);
+  useEffect(() => {
+    let cancelled = false;
+    void fetchTimeline().then((t) => !cancelled && setTimeline(t));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  return timeline;
+}
+
 export function ProjectView({ id }: { id: string }) {
+  const timeline = useDemoTimeline();
+  if (timeline === undefined) return <p className="text-muted" role="status">Cargando…</p>;
+  if (timeline) return <ReplayProject id={id} timeline={timeline} />;
+  return <LiveProject id={id} />;
+}
+
+function ReplayProject({ id, timeline }: { id: string; timeline: Timeline }) {
+  const project = usePolling(() => getProject(id), [id]);
+  return (
+    <>
+      <a href="#/" className="text-sm text-muted hover:text-ink">← Proyectos</a>
+      <Async state={project} emptyText="">
+        {(p) => (
+          <header className="mb-8 mt-2">
+            <h1 className="font-serif text-4xl tracking-tight text-ink">{p.name}</h1>
+          </header>
+        )}
+      </Async>
+      <ReplayPanel timeline={timeline} />
+    </>
+  );
+}
+
+function LiveProject({ id }: { id: string }) {
   const [win, setWin] = useState<WindowLabel>("1 h");
   const project = usePolling(() => getProject(id), [id]);
   const latest = usePolling(() => getLatest(id), [id]);

@@ -12,13 +12,13 @@ import {
 } from "recharts";
 import type { FlowRow, GaugeRow } from "../lib/metrics";
 
-const COLORS = ["#2f3437", "#8fa3b8", "#c9a66b", "#9fb89a"];
-const axis = { fontSize: 12, fill: "#787774" };
+export const COLORS = ["#2f3437", "#8fa3b8", "#c9a66b", "#9fb89a"];
+export const axis = { fontSize: 12, fill: "#787774" };
 
 const hhmm = (iso: string) =>
   new Date(iso).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" });
 
-function Frame({ title, children }: { title: string; children: React.ReactElement }) {
+export function Frame({ title, children }: { title: string; children: React.ReactElement }) {
   return (
     <section className="rounded-lg border border-line bg-card p-6">
       <h3 className="mb-4 font-serif text-xl text-ink">{title}</h3>

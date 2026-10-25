@@ -41,6 +41,7 @@ COPY README.md ./
 COPY backend ./backend
 RUN uv pip install --no-cache --no-deps .
 
+# deploy/ trae tambien deploy/demo/ (clip.mp4 + timeline.json del replay), si existe.
 COPY deploy ./deploy
 COPY scripts/replay_seed.py ./scripts/replay_seed.py
 COPY --from=web /frontend/dist ./web

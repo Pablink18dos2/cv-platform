@@ -189,6 +189,12 @@ recorded minutes up to now, and every minute it inserts the next one with the cu
 **This is replayed recorded data, not live inference.** The snapshot is the last real annotated
 frame ([`deploy/seed-preview.jpg`](deploy/seed-preview.jpg)).
 
+If `deploy/demo/` exists (`clip.mp4` with the detections already drawn + `timeline.json`), nginx serves
+it at `/demo/` (with range requests, so the video can be scrubbed) and the project view shows a
+**replay panel** instead of the image: the looped recorded clip with play/pause, a scrub bar with
+marks at every change in free spaces, and charts synced to the video position. Where
+`/demo/timeline.json` is a 404 (every other environment) the view is unchanged.
+
 ```
 Render $PORT -> nginx -> dashboard (Vite build) + /api -> uvicorn (cvp api) -> SQLite (/app/data)
                                                            ^ replay_seed.py inserts one minute / min
