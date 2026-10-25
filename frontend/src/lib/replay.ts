@@ -68,15 +68,9 @@ export function directionsOfTimeline(tl: Timeline): string[] {
   return [...found].sort();
 }
 
-/**
- * Cruces nuevos de cada punto. Si la serie de un sentido nunca baja se interpreta como contador
- * acumulado (se deriva); si no, como cruces de ese segundo.
- */
-function crossingsPerPoint(tl: Timeline, direction: string): number[] {
-  const values = tl.series.map((p) => p.crossings?.[direction] ?? 0);
-  const cumulative = values.every((v, i) => i === 0 || v >= values[i - 1]);
-  return values.map((v, i) => (cumulative ? v - (i === 0 ? 0 : values[i - 1]) : v));
-}
+/** Cruces de cada segundo (así los emite make_demo_clip.py), no un contador acumulado. */
+const crossingsPerPoint = (tl: Timeline, direction: string): number[] =>
+  tl.series.map((p) => p.crossings?.[direction] ?? 0);
 
 export type FlowWindowRow = { t: number; label: string } & Record<string, number | string>;
 

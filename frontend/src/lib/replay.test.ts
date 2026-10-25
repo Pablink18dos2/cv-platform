@@ -50,14 +50,6 @@ describe("flowWindows", () => {
     expect(early.rows[1]).toMatchObject({ hacia_camara: 0, hacia_fondo: 0 });
     expect(early.max).toBe(end.max);
   });
-
-  it("interpreta como cruces por segundo una serie que no es monótona", () => {
-    const perSecond = {
-      ...tl,
-      series: tl.series.map((p, i) => ({ ...p, crossings: { a: i === 2 || i === 12 ? 1 : 0 } })),
-    };
-    expect(flowWindows(perSecond, 24).rows.map((r) => r.a)).toEqual([1, 1, 0]);
-  });
 });
 
 describe("marcas y navegación entre cambios", () => {

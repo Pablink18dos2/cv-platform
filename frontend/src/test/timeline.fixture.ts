@@ -1,9 +1,9 @@
-// Fixture pequeña con el contrato de /demo/timeline.json (24 s). Los cruces son acumulados.
+// Fixture pequeña con el contrato de /demo/timeline.json (24 s). Los cruces son por segundo.
 import type { Timeline } from "../lib/replay";
 
 const free = [3, 3, 3, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 2, 2, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2];
-const towardsCamera = [0, 0, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 5, 5, 5];
-const towardsBack = [0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3];
+const towardsCamera = [0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0];
+const towardsBack = [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0];
 
 export const fixtureTimeline: Timeline = {
   version: 1,
