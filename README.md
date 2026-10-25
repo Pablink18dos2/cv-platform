@@ -289,3 +289,25 @@ collects bounded evidence, a read-only `claude -p` call proposes `restart_worker
 code only executes what is in its allowlist, with a rate limit, then verifies recovery and records
 the incident. See [`ops/responder/README.md`](ops/responder/README.md); a real incident is in
 [`ops/incidents/example/`](ops/incidents/example/).
+
+### How to reproduce the full on-call demo
+
+The whole loop, with real Grafana and a real `claude -p` (needs Docker and an authenticated
+`claude` CLI on the host). Use a project whose data timestamps follow the wall clock: with a file
+source that means a copy of `00-demo` with `imgsz: 320` and `target_fps: 17` (tuned so the
+processing speed matches real time on the test machine; `00-demo` as is drifts ahead of the clock,
+and a slower setting drifts behind and always looks stale). Delete the copy afterwards.
+
+```bash
+OTEL_EXPORTER_OTLP_ENDPOINT=http://observability:4318 PROJECT=projects/<id> \
+  docker compose --profile observability up -d --build
+uv run python ops/responder/responder.py --api-url http://localhost:8080 &   # listens on 127.0.0.1:9000
+docker compose stop worker          # DataStale: Pending ~3 min later, Firing ~2 min after that
+# then do nothing: Grafana POSTs the webhook, the agent decides `restart_worker`, the worker
+# comes back, ops/incidents/<ts>-incident.json ends in "outcome": "recovered" and Grafana sends
+# `resolved` (acknowledged with 200 and ignored).
+```
+
+`host.docker.internal` reaches a responder bound to `127.0.0.1` on Docker Desktop (Windows), so
+`--host 0.0.0.0` and `RESPONDER_TOKEN` are not needed locally. A full run is recorded in
+[`ops/incidents/example/`](ops/incidents/example/) and in `_docs/checklist-proyecto-final.md`.

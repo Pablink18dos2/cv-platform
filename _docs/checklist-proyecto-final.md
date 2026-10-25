@@ -22,7 +22,7 @@ current status of each one in this repository.
 | 9 | CI/CD | 3 | Level 2 of 3 done |
 | 10 | Observability | 2 | Done (local, `--profile observability`) |
 | 11 | Alerting on user impact | 1 | Done (local, `--profile observability`) |
-| 12 | On-call agent | 2 | Pending |
+| 12 | On-call agent | 2 | Done (local, full loop run twice) |
 
 ## Criteria
 
@@ -132,15 +132,41 @@ webhook (first refused, nobody listening; then delivered to a throw-away listene
 `docker compose start worker` the alert resolved and a `resolved` webhook arrived. Real payloads:
 [`alert-webhook-example.json`](../docs/observability/alert-webhook-example.json); rule list:
 [`alert-rules.png`](../docs/observability/alert-rules.png). The on-call agent (criterion 12)
-consumes this webhook.
+consumes this webhook; the full loop was run with the real Grafana webhook (see criterion 12).
 
 ### 12. On-call agent (0-2)
 
-- [ ] An agent that handles on-call duties (reacts to alerts).
+- [x] An agent that handles on-call duties (reacts to alerts).
+- [x] Verified end to end with the real components (no simulated alert), twice.
 
-Status: pending.
+Status: done, verified by running it on 2026-10-25. `ops/responder/responder.py` listens on the
+host (`127.0.0.1:9000`, reachable from Grafana as `host.docker.internal:9000`, no token or
+`0.0.0.0` needed on Docker Desktop for Windows). Test: temporary project `99-e2e-test` (copy of
+`00-demo`, `imgsz: 320`, `target_fps: 17` so that the data timestamps follow the wall clock),
+`docker compose stop worker`, then nothing else. Run 2 (the one in the screenshots), UTC:
+
+| Time | Event |
+|---|---|
+| 21:15:36 | `docker compose stop worker` |
+| 21:20:35 | Grafana `DataStale` Firing, real webhook received (`alert_received`), 5.0 min after the stop |
+| 21:20:48.9 | real `claude -p` (haiku, no tools) decides `restart_worker` (13 s after the alert) |
+| 21:20:49.5 | `docker compose restart worker` run by code from the allowlist |
+| 21:20:59.6 | verification: newest sample 60 s old, outcome `recovered` (24 s after the alert) |
+| 21:21:20 | rule instance back to Normal; 21:21:35 Grafana sent `resolved`, accepted by the responder (200, ignored; Grafana reports no notify error) |
+
+Run 1 gave the same result (alert 21:13:35, restart 21:13:46, recovered 21:13:56, resolved
+21:14:35). Evidence: incident JSON and bounded evidence in
+[`ops/incidents/example/`](../ops/incidents/example/) (`20261025T212035Z-*.json`,
+`20261025T211335Z-incident.json`); Grafana, rule instances Firing and then Normal:
+[`alert-firing-e2e.png`](../docs/observability/alert-firing-e2e.png),
+[`alert-normal-e2e.png`](../docs/observability/alert-normal-e2e.png). A side result of the same
+session: `20261025T210235Z-incident.json` is a real `no_action`: Grafana also fired `DataStale`
+for the stale rows of `00-demo` (nobody runs it) while another worker was healthy, and the agent
+correctly declined to restart. Not verified: the `not_recovered` and rate-limit `escalated`
+paths against the real stack (covered only by unit tests). Reproduce it: README, "How to
+reproduce the full on-call demo".
 
 ---
 
-**Points confirmed so far: 10 / 24** (Application 2, Testing 2, Containerization 2, Deployment 2, CI/CD 2).
+**Points confirmed so far: 15 / 24** (Application 2, Testing 2, Containerization 2, Deployment 2, CI/CD 2, Observability 2, Alerting 1, On-call agent 2). Criteria 1-4 (8 points) stay pending final review.
 Pass mark: 10.

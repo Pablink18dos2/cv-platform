@@ -1,0 +1,47 @@
+{
+  "collected_at": "2026-10-25T21:20:35.042617+00:00",
+  "project": "99-e2e-test",
+  "compose_ps": [
+    {
+      "Service": "api",
+      "State": "running",
+      "Status": "Up 20 minutes (healthy)",
+      "Health": "healthy",
+      "ExitCode": 0
+    },
+    {
+      "Service": "db",
+      "State": "running",
+      "Status": "Up 20 minutes (healthy)",
+      "Health": "healthy",
+      "ExitCode": 0
+    },
+    {
+      "Service": "observability",
+      "State": "running",
+      "Status": "Up 20 minutes (healthy)",
+      "Health": "healthy",
+      "ExitCode": 0
+    },
+    {
+      "Service": "web",
+      "State": "running",
+      "Status": "Up 20 minutes",
+      "Health": "",
+      "ExitCode": 0
+    },
+    {
+      "Service": "worker",
+      "State": "exited",
+      "Status": "Exited (137) 4 minutes ago",
+      "Health": "",
+      "ExitCode": 137
+    }
+  ],
+  "worker_logs_tail": "ms (241) | sinks 964 escrituras, 0 errores | fuente 0 reconexion(es), 0 re-anclaje(s), retraso max 0.0 s\nworker-1  | 2026-10-25 21:01:10,422 INFO    cvp.pipeline.runner: salud 20261025T210006Z-bb1f1604: 692 fotogramas en 60 s = 11.49 fps | fuente p50 11.5 ms p95 27.4 ms (692) | detector p50 37.8 ms p95 151.7 ms (692) | tracker p50 1.1 ms p95 2.8 ms (692) | sinks 2768 escrituras, 0 errores | fuente 0 reconexion(es), 0 re-anclaje(s), retraso max 0.0 s\nworker-1  | 2026-10-25 21:01:40,474 INFO    cvp.pipeline.runner: salud 20261025T210006Z-bb1f1604: 1162 fotogramas en 90 s = 12.87 fps | fuente p50 10.6 ms p95 26.0 ms (1162) | detector p50 35.6 ms p95 116.2 ms (1162) | tracker p50 1.1 ms p95 2.6 ms (1162) | sinks 4648 escrituras, 0 errores | fuente 0 reconexion(es), 0 re-anclaje(s), retraso max 0.0 s\nworker-1  | 2026-10-25 21:02:10,503 INFO    cvp.pipeline.runner: salud 20261025T210006Z-bb1f1604: 1623 fotogramas en 120 s = 13.49 fps | fuente p50 10.4 ms p95 23.4 ms (1623) | detector p50 35.1 ms p95 98.1 ms (1623) | tracker p50 1.1 ms p95 2.5 ms (1623) | sinks 6492 escrituras, 0 errores | fuente 0 reconexion(es), 0 re-anclaje(s), retraso max 0.0 s\nworker-1  | 2026-10-25 21:02:40,583 INFO    cvp.pipeline.runner: salud 20261025T210006Z-bb1f1604: 2043 fotogramas en 150 s = 13.58 fps | fuente p50 10.3 ms p95 23.1 ms (2043) | detector p50 35.0 ms p95 90.5 ms (2043) | tracker p50 1.0 ms p95 2.5 ms (2043) | sinks 8172 escrituras, 0 errores | fuente 0 reconexion(es), 0 re-anclaje(s), retraso max 0.0 s\nworker-1  | 2026-10-25 21:03:10,612 INFO    cvp.pipeline.runner: salud 20261025T210006Z-bb1f1604: 2473 fotogramas en 180 s = 13.71 fps | fuente p50 10.2 ms p95 22.6 ms (2473) | detector p50 35.0 ms p95 88.9 ms (2473) | tracker p50 1.0 ms p95 2.5 ms (2473) | sinks 9892 escrituras, 0 errores | fuente 0 reconexion(es), 0 re-anclaje(s), retraso max 0.0 s\nworker-1  | 2026-10-25 21:03:40,620 INFO    cvp.pipeline.runner: salud 20261025T210006Z-bb1f1604: 2924 fotogramas en 210 s = 13.89 fps | fuente p50 10.2 ms p95 22.2 ms (2924) | detector p50 34.9 ms p95 85.2 ms (2924) | tracker p50 1.0 ms p95 2.4 ms (2924) | sinks 11696 escrituras, 0 errores | fuente 0 reconexion(es), 0 re-anclaje(s), retraso max 0.0 s\nworker-1  | 2026-10-25 21:04:17,643 INFO    cvp.pipeline.runner: roi (0.15, 0.28, 1.0, 1.0) del YAML -> BBox(x1=288.0, y1=302.40000000000003, x2=1920.0, y2=1080.0) en pixeles sobre un fotograma de 1920x1080\nworker-1  | 2026-10-25 21:04:19,014 INFO    cvp.pipeline.runner: arranca 20261025T210417Z-5f1ab17b en 1.4 s: 2 analizador(es), 2 sink(s), roi BBox(x1=288.0, y1=302.40000000000003, x2=1920.0, y2=1080.0)\nworker-1  | 2026-10-25 21:04:19,142 INFO    cvp.analyzers.geometry: traffic_flow: geometria convertida a pixeles sobre un fotograma de 1920x1080\nworker-1  | 2026-10-25 21:04:19,151 INFO    cvp.analyzers.geometry: parking_occupancy: geometria convertida a pixeles sobre un fotograma de 1920x1080\nworker-1  | 2026-10-25 21:04:49,075 INFO    cvp.pipeline.runner: salud 20261025T210417Z-5f1ab17b: 579 fotogramas en 30 s = 19.26 fps | fuente p50 4.3 ms p95 9.1 ms (579) | detector p50 29.9 ms p95 57.0 ms (579) | tracker p50 0.9 ms p95 2.2 ms (579) | sinks 2316 escrituras, 0 errores | fuente 0 reconexion(es), 0 re-anclaje(s), retraso max 0.0 s\nworker-1  | 2026-10-25 21:05:19,128 INFO    cvp.pipeline.runner: salud 20261025T210417Z-5f1ab17b: 1133 fotogramas en 60 s = 18.84 fps | fuente p50 4.4 ms p95 9.8 ms (1133) | detector p50 30.1 ms p95 58.5 ms (1133) | tracker p50 1.0 ms p95 2.2 ms (1133) | sinks 4532 escrituras, 0 errores | fuente 0 reconexion(es), 0 re-anclaje(s), retraso max 0.0 s\nworker-1  | 2026-10-25 21:05:49,174 INFO    cvp.pipeline.runner: salud 20261025T210417Z-5f1ab17b: 1688 fotogramas en 90 s = 18.72 fps | fuente p50 4.5 ms p95 10.2 ms (1688) | detector p50 30.3 ms p95 59.5 ms (1688) | tracker p50 1.0 ms p95 2.1 ms (1688) | sinks 6752 escrituras, 0 errores | fuente 0 reconexion(es), 0 re-anclaje(s), retraso max 0.0 s\nworker-1  | 2026-10-25 21:06:19,184 INFO    cvp.pipeline.runner: salud 20261025T210417Z-5f1ab17b: 2078 fotogramas en 120 s = 17.29 fps | fuente p50 4.6 ms p95 10.5 ms (2078) | detector p50 31.2 ms p95 65.2 ms (2078) | tracker p50 1.0 ms p95 2.2 ms (2078) | sinks 8312 escrituras, 0 errores | fuente 0 reconexion(es), 0 re-anclaje(s), retraso max 0.0 s\nworker-1  | 2026-10-25 21:06:49,288 INFO    cvp.pipeline.runner: salud 20261025T210417Z-5f1ab17b: 2239 fotogramas en 150 s = 14.90 fps | fuente p50 4.7 ms p95 11.1 ms (2239) | detector p50 31.6 ms p95 79.8 ms (2239) | tracker p50 1.0 ms p95 2.3 ms (2239) | sinks 8956 escrituras, 0 errores | fuente 0 reconexion(es), 0 re-anclaje(s), retraso max 0.0 s\nworker-1  | 2026-10-25 21:07:19,348 INFO    cvp.pipeline.runner: salud 20261025T210417Z-5f1ab17b: 2462 fotogramas en 180 s = 13.65 fps | fuente p50 4.8 ms p95 11.9 ms (2462) | detector p50 32.7 ms p95 116.1 ms (2462) | tracker p50 1.0 ms p95 2.5 ms (2462) | sinks 9848 escrituras, 0 errores | fuente 0 reconexion(es), 0 re-anclaje(s), retraso max 0.0 s\nworker-1  | 2026-10-25 21:07:49,384 INFO    cvp.pipeline.runner: salud 20261025T210417Z-5f1ab17b: 2713 fotogramas en 210 s = 12.89 fps | fuente p50 4.9 ms p95 12.5 ms (2713) | detector p50 34.3 ms p95 138.2 ms (2713) | tracker p50 1.1 ms p95 2.6 ms (2713) | sinks 10852 escrituras, 0 errores | fuente 0 reconexion(es), 0 re-anclaje(s), retraso max 0.0 s\nworker-1  | 2026-10-25 21:08:19,416 INFO    cvp.pipeline.runner: salud 20261025T210417Z-5f1ab17b: 3121 fotogramas en 240 s = 12.98 fps | fuente p50 5.0 ms p95 12.5 ms (3121) | detector p50 35.0 ms p95 134.1 ms (3121) | tracker p50 1.1 ms p95 2.6 ms (3121) | sinks 12484 escrituras, 0 errores | fuente 0 reconexion(es), 0 re-anclaje(s), retraso max 0.0 s\nworker-1  | 2026-10-25 21:08:49,434 INFO    cvp.pipeline.runner: salud 20261025T210417Z-5f1ab17b: 3645 fotogramas en 270 s = 13.48 fps | fuente p50 5.0 ms p95 12.1 ms (3645) | detector p50 34.3 ms p95 121.2 ms (3645) | tracker p50 1.1 ms p95 2.5 ms (3645) | sinks 14580 escrituras, 0 errores | fuente 0 reconexion(es), 0 re-anclaje(s), retraso max 0.0 s\nworker-1  | 2026-10-25 21:09:19,503 INFO    cvp.pipeline.runner: salud 20261025T210417Z-5f1ab17b: 4157 fotogramas en 301 s = 13.83 fps | fuente p50 5.0 ms p95 12.0 ms (4157) | detector p50 34.0 ms p95 110.9 ms (4157) | tracker p50 1.1 ms p95 2.5 ms (4157) | sinks 16628 escrituras, 0 errores | fuente 0 reconexion(es), 0 re-anclaje(s), retraso max 0.0 s\nworker-1  | 2026-10-25 21:13:48,452 INFO    cvp.pipeline.runner: roi (0.15, 0.28, 1.0, 1.0) del YAML -> BBox(x1=288.0, y1=302.40000000000003, x2=1920.0, y2=1080.0) en pixeles sobre un fotograma de 1920x1080\nworker-1  | 2026-10-25 21:13:49,974 INFO    cvp.pipeline.runner: arranca 20261025T211348Z-11b8efb7 en 1.6 s: 2 analizador(es), 2 sink(s), roi BBox(x1=288.0, y1=302.40000000000003, x2=1920.0, y2=1080.0)\nworker-1  | 2026-10-25 21:13:50,094 INFO    cvp.analyzers.geometry: traffic_flow: geometria convertida a pixeles sobre un fotograma de 1920x1080\nworker-1  | 2026-10-25 21:13:50,104 INFO    cvp.analyzers.geometry: parking_occupancy: geometria convertida a pixeles sobre un fotograma de 1920x1080\nworker-1  | 2026-10-25 21:14:20,064 INFO    cvp.pipeline.runner: salud 20261025T211348Z-11b8efb7: 464 fotogramas en 30 s = 15.42 fps | fuente p50 5.2 ms p95 11.8 ms (464) | detector p50 36.0 ms p95 87.0 ms (464) | tracker p50 1.1 ms p95 2.7 ms (464) | sinks 1856 escrituras, 0 errores | fuente 0 reconexion(es), 0 re-anclaje(s), retraso max 0.0 s\nworker-1  | 2026-10-25 21:14:50,101 INFO    cvp.pipeline.runner: salud 20261025T211348Z-11b8efb7: 960 fotogramas en 60 s = 15.96 fps | fuente p50 5.0 ms p95 11.6 ms (960) | detector p50 34.7 ms p95 79.6 ms (960) | tracker p50 1.1 ms p95 2.5 ms (960) | sinks 3840 escrituras, 0 errores | fuente 0 reconexion(es), 0 re-anclaje(s), retraso max 0.0 s\nworker-1  | 2026-10-25 21:15:20,145 INFO    cvp.pipeline.runner: salud 20261025T211348Z-11b8efb7: 1381 fotogramas en 90 s = 15.31 fps | fuente p50 5.2 ms p95 11.8 ms (1381) | detector p50 35.2 ms p95 88.2 ms (1381) | tracker p50 1.1 ms p95 2.5 ms (1381) | sinks 5524 escrituras, 0 errores | fuente 0 reconexion(es), 0 re-anclaje(s), retraso max 0.0 s",
+  "metrics": {
+    "series": 8,
+    "newest_minute": "2026-10-25T21:15:00+00:00",
+    "age_seconds": 336
+  }
+}

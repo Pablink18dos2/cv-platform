@@ -1,0 +1,41 @@
+{
+  "id": "20261025T210235Z",
+  "project": "00-demo",
+  "outcome": "no_action",
+  "started_at": "2026-10-25T21:02:35.060897+00:00",
+  "finished_at": "2026-10-25T21:03:17.607771+00:00",
+  "timeline": [
+    {
+      "at": "2026-10-25T21:02:35.060951+00:00",
+      "event": "alert_received",
+      "alertname": "DataStale",
+      "service": "worker",
+      "project": "00-demo"
+    },
+    {
+      "at": "2026-10-25T21:02:37.214797+00:00",
+      "event": "evidence_collected",
+      "file": "20261025T210235Z-evidence.json",
+      "metrics": {
+        "series": 8,
+        "newest_minute": "2026-10-25T20:04:00+00:00",
+        "age_seconds": 3517
+      }
+    },
+    {
+      "at": "2026-10-25T21:03:17.606263+00:00",
+      "event": "agent_decision",
+      "decision": {
+        "diagnosis": "Worker container is running and actively processing frames (13.49 fps, 6492 writes, 0 errors as of 21:02:10), but the exported metrics are stale (58 minutes old), indicating a metrics collection or export issue rather than a worker failure.",
+        "action": "none",
+        "reason": "The worker is healthy and not stalled based on recent logs showing continued frame processing. The metrics staleness points to a downstream metrics collection or observability pipeline failure, not a worker process problem, so restarting the worker would not resolve the root cause."
+      },
+      "validation_error": null
+    },
+    {
+      "at": "2026-10-25T21:03:17.607616+00:00",
+      "event": "no_action_taken",
+      "reason": "The worker is healthy and not stalled based on recent logs showing continued frame processing. The metrics staleness points to a downstream metrics collection or observability pipeline failure, not a worker process problem, so restarting the worker would not resolve the root cause."
+    }
+  ]
+}

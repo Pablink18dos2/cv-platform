@@ -1,0 +1,49 @@
+{
+  "id": "20261025T211335Z",
+  "project": "99-e2e-test",
+  "outcome": "recovered",
+  "started_at": "2026-10-25T21:13:35.037900+00:00",
+  "finished_at": "2026-10-25T21:13:56.345961+00:00",
+  "timeline": [
+    {
+      "at": "2026-10-25T21:13:35.038031+00:00",
+      "event": "alert_received",
+      "alertname": "DataStale",
+      "service": "worker",
+      "project": "99-e2e-test"
+    },
+    {
+      "at": "2026-10-25T21:13:35.843748+00:00",
+      "event": "evidence_collected",
+      "file": "20261025T211335Z-evidence.json",
+      "metrics": {
+        "series": 8,
+        "newest_minute": "2026-10-25T21:08:00+00:00",
+        "age_seconds": 336
+      }
+    },
+    {
+      "at": "2026-10-25T21:13:45.509979+00:00",
+      "event": "agent_decision",
+      "decision": {
+        "diagnosis": "Worker container exited with code 137 approximately 3 minutes ago, stopping metric production. The logs show normal operation until ~21:09:19 before the exit.",
+        "action": "restart_worker",
+        "reason": "The worker is not running (State: exited). Exit code 137 suggests termination by signal (possibly OOM or system kill). Restarting the container is the appropriate remediation for a crashed worker process."
+      },
+      "validation_error": null
+    },
+    {
+      "at": "2026-10-25T21:13:46.299826+00:00",
+      "event": "action_executed",
+      "action": "restart_worker",
+      "executed": true,
+      "returncode": 0
+    },
+    {
+      "at": "2026-10-25T21:13:56.345671+00:00",
+      "event": "verification",
+      "recovered": true,
+      "age_seconds": 56
+    }
+  ]
+}

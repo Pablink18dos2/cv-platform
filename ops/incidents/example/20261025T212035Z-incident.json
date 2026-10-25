@@ -1,0 +1,49 @@
+{
+  "id": "20261025T212035Z",
+  "project": "99-e2e-test",
+  "outcome": "recovered",
+  "started_at": "2026-10-25T21:20:35.041711+00:00",
+  "finished_at": "2026-10-25T21:20:59.554929+00:00",
+  "timeline": [
+    {
+      "at": "2026-10-25T21:20:35.041931+00:00",
+      "event": "alert_received",
+      "alertname": "DataStale",
+      "service": "worker",
+      "project": "99-e2e-test"
+    },
+    {
+      "at": "2026-10-25T21:20:36.239166+00:00",
+      "event": "evidence_collected",
+      "file": "20261025T212035Z-evidence.json",
+      "metrics": {
+        "series": 8,
+        "newest_minute": "2026-10-25T21:15:00+00:00",
+        "age_seconds": 336
+      }
+    },
+    {
+      "at": "2026-10-25T21:20:48.877076+00:00",
+      "event": "agent_decision",
+      "decision": {
+        "diagnosis": "Worker container has exited with signal 137 (SIGKILL) approximately 4 minutes ago. Logs show healthy operation up until the exit, with no errors or failures indicated.",
+        "action": "restart_worker",
+        "reason": "The worker is not running (exited state) but was producing metrics normally before termination. All dependencies (database, API, observability) are healthy. Restarting the container should restore metric production."
+      },
+      "validation_error": null
+    },
+    {
+      "at": "2026-10-25T21:20:49.511209+00:00",
+      "event": "action_executed",
+      "action": "restart_worker",
+      "executed": true,
+      "returncode": 0
+    },
+    {
+      "at": "2026-10-25T21:20:59.554760+00:00",
+      "event": "verification",
+      "recovered": true,
+      "age_seconds": 60
+    }
+  ]
+}
