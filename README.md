@@ -224,6 +224,59 @@ Limitations: the free service sleeps after 15 minutes without traffic and takes 
 wake; the disk is ephemeral (the database is rebuilt from the seed on every start); there is no live
 inference, only the replayed recording; the YouTube live stream is not available there.
 
+## Observability
+
+Optional and off by default. The API (`cvp.api.telemetria`) emits OpenTelemetry only when
+`OTEL_EXPORTER_OTLP_ENDPOINT` is set; without it nothing is imported or started, so the light
+Render image and the test suite behave as before. The key user journey is the dashboard asking
+`GET /api/v1/projects/{id}/metrics/latest` (and `/metrics`), which reads the database.
+
+```bash
+OTEL_EXPORTER_OTLP_ENDPOINT=http://observability:4318 PROJECT=projects/00-demo   docker compose --profile observability up -d --build       # bash
+# PowerShell: $env:OTEL_EXPORTER_OTLP_ENDPOINT = "http://observability:4318"; ...
+```
+
+(or put `COMPOSE_PROFILES=observability` and the endpoint in `.env`). Grafana is at
+<http://localhost:3000> (admin/admin, anonymous viewing as Admin: local use only); OTLP listens on
+4317 (gRPC) and 4318 (HTTP). The `observability` service is `grafana/otel-lgtm` (Grafana, Tempo,
+Loki, Prometheus in one container); `ops/grafana/` is mounted into it and provisions everything.
+
+| Signal | What is emitted | Where to look |
+|---|---|---|
+| Traces | one per request (FastAPI) with a child span per SQL query (SQLAlchemy) | Explore > Tempo, or the "Recent traces" table of the dashboard |
+| Metrics | request count and latency per route (`http_server_request_duration_seconds_*`) and the custom gauge `cvp_data_freshness_seconds{project}`: seconds since the newest `metric_minute` row of each project, computed at export time | dashboard "CV Platform – user journey" (Dashboards > CV Platform) |
+| Logs | one JSON line per request on stdout and over OTLP, with `trace_id` and `span_id` of the request span | dashboard log panel, Explore > Loki: `{service_name="cvp-api"} \| trace_id="<id>"` |
+
+The `trace_id` in the JSON log line is the id of the trace (`docker compose logs api` shows it;
+Loki stores it as structured metadata, and the image's own datasources link Loki and Tempo by
+`trace_id`). No
+customer data: there are no users, and still no headers, cookies, query strings, client IP or
+user agent are exported (spans are scrubbed, logs carry method, route template, status and
+duration only). The worker is not instrumented. Screenshots: [`docs/observability/`](docs/observability/)
+(`dashboard.png`, `alert-rules.png`, `trace.png`).
+
+### Alerting on user impact
+
+`ops/grafana/provisioning/alerting/cvp.yaml` (a provisioned file, no clicking):
+
+- **`DataStale`**: `cvp_data_freshness_seconds > 180` for 2 minutes, i.e. the user opens the
+  dashboard and sees data older than 3 minutes (the worker stopped). Labels:
+  `alertname=DataStale`, `service=worker`, `project=<id>`. Only projects with data from the last
+  6 hours are considered, so an old project nobody runs does not page anyone. Note that for file
+  sources (`00-demo`) the data timestamps follow the video, not the wall clock, so on a machine
+  slower or faster than real time the freshness drifts; it is meaningful for live sources.
+- **`ApiErrorRate`** (`service=api`): more than 5 % of API requests are 5xx for 5 minutes.
+- Contact point `oncall-agent`: webhook `POST http://host.docker.internal:9000/alert` (where
+  `ops/responder/` listens), standard Grafana webhook JSON, grouped by `alertname` and `project`.
+  A real firing and resolved payload is in
+  [`docs/observability/alert-webhook-example.json`](docs/observability/alert-webhook-example.json).
+  If nobody listens, Grafana logs the refused connection and retries every minute.
+
+Try it: `docker compose stop worker`; after about 3 minutes the rule is Pending, 2 minutes later
+Firing; `docker compose start worker` resolves it. After editing the dashboard JSON, run
+`docker compose --profile observability restart observability` (the bind-mounted file is not
+re-read on Docker Desktop for Windows).
+
 ## Status
 
 Under construction. The backlog is in the GitHub issues; the initial history is in

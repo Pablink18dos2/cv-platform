@@ -26,6 +26,7 @@ from cvp.api.db import abrir_engine
 from cvp.api.errors import registrar_manejadores
 from cvp.api.routers import events, metrics, projects, stream
 from cvp.api.settings import Settings
+from cvp.api.telemetria import configurar as configurar_telemetria
 
 __all__ = ["BASE_PATH", "crear_app"]
 
@@ -59,6 +60,8 @@ def crear_app(
         try:
             yield
         finally:
+            if app.state.apagar_telemetria is not None:
+                app.state.apagar_telemetria()
             app.state.engine.dispose()
 
     app = FastAPI(
@@ -84,6 +87,8 @@ def crear_app(
         allow_headers=["*"],
     )
     registrar_manejadores(app)
+    # Sin OTEL_EXPORTER_OTLP_ENDPOINT no hace nada (ni importa OpenTelemetry).
+    app.state.apagar_telemetria = configurar_telemetria(app, ajustes.otlp_endpoint)
     app.include_router(projects.router, prefix=BASE_PATH)
     app.include_router(metrics.router, prefix=BASE_PATH)
     app.include_router(events.router, prefix=BASE_PATH)

@@ -1,0 +1,112 @@
+# Alertas sobre impacto en el usuario (no CPU ni memoria), provisionadas como fichero.
+# Contact point -> webhook al agente de guardia, que escucha en el host (puerto 9000).
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: oncall-agent
+    receivers:
+      - uid: oncall-agent-webhook
+        type: webhook
+        settings:
+          url: http://host.docker.internal:9000/alert
+          httpMethod: POST
+
+policies:
+  - orgId: 1
+    receiver: oncall-agent
+    group_by: [alertname, project]
+    group_wait: 10s
+    group_interval: 1m
+    repeat_interval: 1h
+
+groups:
+  - orgId: 1
+    name: cvp-user-impact
+    folder: CV Platform
+    interval: 30s
+    rules:
+      # El usuario abre el dashboard y ve datos viejos: el worker no esta escribiendo.
+      # cvp_data_freshness_seconds lo exporta la API (cvp.api.telemetria): segundos desde
+      # el ultimo minuto con muestras de metric_minute de cada proyecto.
+      - uid: cvp-data-stale
+        title: DataStale
+        condition: C
+        for: 2m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          service: worker
+        annotations:
+          summary: "The dashboard of {{ $labels.project }} is showing data older than 3 minutes"
+          description: "The newest metric_minute row of {{ $labels.project }} is {{ $values.B }} s old. Its worker is probably stopped."
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              # `< 21600`: solo proyectos con datos de las ultimas 6 h. Un proyecto que nadie
+              # ejecuta (datos de ayer) no es un incidente de hoy.
+              expr: max by (project) (cvp_data_freshness_seconds < 21600)
+              instant: false
+              intervalMs: 15000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [180]}
+
+      # El usuario recibe errores del servidor: mas del 5 % de las peticiones de la API
+      # terminan en 5xx durante 5 minutos.
+      - uid: cvp-api-5xx
+        title: ApiErrorRate
+        condition: C
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          service: api
+        annotations:
+          summary: "More than 5 % of API requests return 5xx"
+          description: "5xx ratio over the last 5 minutes: {{ $values.B }}."
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: >-
+                (sum(rate(http_server_request_duration_seconds_count{http_response_status_code=~"5.."}[5m])) or vector(0))
+                / sum(rate(http_server_request_duration_seconds_count[5m]))
+              instant: false
+              intervalMs: 15000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0.05]}

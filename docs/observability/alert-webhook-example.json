@@ -1,0 +1,115 @@
+{
+  "_comment": "Real POSTs captured at http://host.docker.internal:9000/alert from Grafana 13.2.4 (otel-lgtm v0.38.0) during the DataStale test: worker stopped (firing), worker restarted (resolved). Content-Type: application/json, User-Agent: Grafana. Project 99-obs-test was a temporary copy of 00-demo.",
+  "firing": {
+    "receiver": "oncall-agent",
+    "status": "firing",
+    "alerts": [
+      {
+        "status": "firing",
+        "labels": {
+          "alertname": "DataStale",
+          "grafana_folder": "CV Platform",
+          "project": "99-obs-test",
+          "service": "worker"
+        },
+        "annotations": {
+          "description": "El ultimo dato de metric_minute de 99-obs-test tiene 364.266302 s. El worker de ese proyecto probablemente esta parado.",
+          "summary": "El dashboard de 99-obs-test muestra datos de hace mas de 3 minutos"
+        },
+        "startsAt": "2026-10-25T20:40:20Z",
+        "endsAt": "0001-01-01T00:00:00Z",
+        "generatorURL": "http://localhost:3000/alerting/grafana/cvp-data-stale/view?orgId=1",
+        "fingerprint": "94ddc69971345f52",
+        "silenceURL": "http://localhost:3000/alerting/silence/new?alertmanager=grafana&matcher=__alert_rule_uid__%3Dcvp-data-stale&matcher=project%3D99-obs-test&matcher=service%3Dworker&orgId=1",
+        "dashboardURL": "",
+        "panelURL": "",
+        "ruleUID": "cvp-data-stale",
+        "values": {
+          "B": 364.266302,
+          "C": 1
+        },
+        "valueString": "[ var='B' labels={project=99-obs-test} type='reduce' value=364.266302 ], [ var='C' labels={project=99-obs-test} type='threshold' value=1 ]",
+        "orgId": 1
+      }
+    ],
+    "groupLabels": {
+      "alertname": "DataStale",
+      "project": "99-obs-test"
+    },
+    "commonLabels": {
+      "alertname": "DataStale",
+      "grafana_folder": "CV Platform",
+      "project": "99-obs-test",
+      "service": "worker"
+    },
+    "commonAnnotations": {
+      "description": "El ultimo dato de metric_minute de 99-obs-test tiene 364.266302 s. El worker de ese proyecto probablemente esta parado.",
+      "summary": "El dashboard de 99-obs-test muestra datos de hace mas de 3 minutos"
+    },
+    "externalURL": "http://localhost:3000/",
+    "appVersion": "13.2.4",
+    "version": "1",
+    "groupKey": "{}:{alertname=\"DataStale\", project=\"99-obs-test\"}",
+    "truncatedAlerts": 0,
+    "orgId": 1,
+    "title": "[FIRING:1] DataStale 99-obs-test (CV Platform worker)",
+    "state": "alerting",
+    "message": "**Firing**\n\nValue: B=364.266302, C=1\nLabels:\n - alertname = DataStale\n - grafana_folder = CV Platform\n - project = 99-obs-test\n - service = worker\nAnnotations:\n - description = El ultimo dato de metric_minute de 99-obs-test tiene 364.266302 s. El worker de ese proyecto probablemente esta parado.\n - summary = El dashboard de 99-obs-test muestra datos de hace mas de 3 minutos\nSource: http://localhost:3000/alerting/grafana/cvp-data-stale/view?orgId=1\nSilence: http://localhost:3000/alerting/silence/new?alertmanager=grafana&matcher=__alert_rule_uid__%3Dcvp-data-stale&matcher=project%3D99-obs-test&matcher=service%3Dworker&orgId=1\n"
+  },
+  "resolved": {
+    "receiver": "oncall-agent",
+    "status": "resolved",
+    "alerts": [
+      {
+        "status": "resolved",
+        "labels": {
+          "alertname": "DataStale",
+          "grafana_folder": "CV Platform",
+          "project": "99-obs-test",
+          "service": "worker"
+        },
+        "annotations": {
+          "description": "El ultimo dato de metric_minute de 99-obs-test tiene 0 s. El worker de ese proyecto probablemente esta parado.",
+          "summary": "El dashboard de 99-obs-test muestra datos de hace mas de 3 minutos"
+        },
+        "startsAt": "2026-10-25T20:40:20Z",
+        "endsAt": "2026-10-25T20:41:50Z",
+        "generatorURL": "http://localhost:3000/alerting/grafana/cvp-data-stale/view?orgId=1",
+        "fingerprint": "94ddc69971345f52",
+        "silenceURL": "http://localhost:3000/alerting/silence/new?alertmanager=grafana&matcher=__alert_rule_uid__%3Dcvp-data-stale&matcher=project%3D99-obs-test&matcher=service%3Dworker&orgId=1",
+        "dashboardURL": "",
+        "panelURL": "",
+        "ruleUID": "cvp-data-stale",
+        "values": {
+          "B": 0,
+          "C": 0
+        },
+        "valueString": "[ var='B' labels={project=99-obs-test} type='reduce' value=0 ], [ var='C' labels={project=99-obs-test} type='threshold' value=0 ]",
+        "orgId": 1
+      }
+    ],
+    "groupLabels": {
+      "alertname": "DataStale",
+      "project": "99-obs-test"
+    },
+    "commonLabels": {
+      "alertname": "DataStale",
+      "grafana_folder": "CV Platform",
+      "project": "99-obs-test",
+      "service": "worker"
+    },
+    "commonAnnotations": {
+      "description": "El ultimo dato de metric_minute de 99-obs-test tiene 0 s. El worker de ese proyecto probablemente esta parado.",
+      "summary": "El dashboard de 99-obs-test muestra datos de hace mas de 3 minutos"
+    },
+    "externalURL": "http://localhost:3000/",
+    "appVersion": "13.2.4",
+    "version": "1",
+    "groupKey": "{}:{alertname=\"DataStale\", project=\"99-obs-test\"}",
+    "truncatedAlerts": 0,
+    "orgId": 1,
+    "title": "[RESOLVED] DataStale 99-obs-test (CV Platform worker)",
+    "state": "ok",
+    "message": "**Resolved**\n\nValue: B=0, C=0\nLabels:\n - alertname = DataStale\n - grafana_folder = CV Platform\n - project = 99-obs-test\n - service = worker\nAnnotations:\n - description = El ultimo dato de metric_minute de 99-obs-test tiene 0 s. El worker de ese proyecto probablemente esta parado.\n - summary = El dashboard de 99-obs-test muestra datos de hace mas de 3 minutos\nSource: http://localhost:3000/alerting/grafana/cvp-data-stale/view?orgId=1\nSilence: http://localhost:3000/alerting/silence/new?alertmanager=grafana&matcher=__alert_rule_uid__%3Dcvp-data-stale&matcher=project%3D99-obs-test&matcher=service%3Dworker&orgId=1\n"
+  }
+}

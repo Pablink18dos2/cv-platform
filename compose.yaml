@@ -4,6 +4,8 @@
 #   api     la API de lectura (cvp api).
 #   worker  el pipeline de UN proyecto (cvp run), el que diga PROJECT.
 #   web     nginx: sirve el dashboard compilado y reenvia /api a la API.
+#   observability  (solo con `--profile observability`) Grafana + Tempo + Loki + Prometheus
+#           en una imagen (grafana/otel-lgtm): recibe la telemetria de la API por OTLP.
 #
 # api y worker usan la misma imagen; solo cambia el comando.
 
@@ -46,6 +48,11 @@ services:
       <<: *backend-env
       CVP_API_HOST: 0.0.0.0
       CVP_API_PORT: "8000"
+      # Telemetria opcional: la API solo la arranca si esta variable no esta vacia. Con el
+      # profile `observability`: OTEL_EXPORTER_OTLP_ENDPOINT=http://observability:4318
+      # (en .env o en la linea de comandos). Ver la seccion Observability del README.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_METRIC_EXPORT_INTERVAL: ${OTEL_METRIC_EXPORT_INTERVAL:-15000}
     ports:
       - "127.0.0.1:${API_PORT:-8000}:8000"
     depends_on:
@@ -95,6 +102,22 @@ services:
       - "${WEB_PORT:-8080}:80"
     depends_on:
       - api
+    restart: unless-stopped
+
+  observability:
+    profiles: ["observability"]
+    image: grafana/otel-lgtm:latest
+    ports:
+      - "127.0.0.1:3000:3000" # Grafana (admin/admin)
+      - "127.0.0.1:4317:4317" # OTLP gRPC
+      - "127.0.0.1:4318:4318" # OTLP HTTP
+    # Para que el webhook de alerta llegue al agente de guardia, que escucha en el host.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./ops/grafana/provisioning/dashboards/cvp.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/cvp.yaml:ro
+      - ./ops/grafana/provisioning/alerting/cvp.yaml:/otel-lgtm/grafana/conf/provisioning/alerting/cvp.yaml:ro
+      - ./ops/grafana/dashboards:/var/lib/cvp/dashboards:ro
     restart: unless-stopped
 
 volumes:

@@ -49,6 +49,8 @@ class Settings:
     # que la base de datos por defecto y por el mismo motivo.
     preview_dir: Path = field(default_factory=lambda: DIRECTORIO_PREVIEW)
     stream_interval_s: float = INTERVALO_STREAM_POR_DEFECTO_S
+    # `OTEL_EXPORTER_OTLP_ENDPOINT`: si falta, la telemetria no se arranca (`cvp.api.telemetria`).
+    otlp_endpoint: str | None = None
 
     def __post_init__(self) -> None:
         if not (1 <= self.port <= 65535):
@@ -86,4 +88,5 @@ class Settings:
             host=valor("CVP_API_HOST") or HOST_POR_DEFECTO,
             port=puerto,
             cors_origins=origenes,
+            otlp_endpoint=valor("OTEL_EXPORTER_OTLP_ENDPOINT"),
         )

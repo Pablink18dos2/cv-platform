@@ -20,8 +20,8 @@ current status of each one in this repository.
 | 7 | Containerization | 2 | Done |
 | 8 | Deployment | 2 | Done: https://cv-platform-mrg8.onrender.com |
 | 9 | CI/CD | 3 | Level 2 of 3 done |
-| 10 | Observability | 2 | Pending |
-| 11 | Alerting on user impact | 1 | Pending |
+| 10 | Observability | 2 | Done (local, `--profile observability`) |
+| 11 | Alerting on user impact | 1 | Done (local, `--profile observability`) |
 | 12 | On-call agent | 2 | Pending |
 
 ## Criteria
@@ -103,16 +103,36 @@ free tier gives a single environment.
 
 ### 10. Observability (0-2)
 
-- [ ] Structured logs, metrics and traces sharing the same trace ID, with no customer data,
+- [x] Structured logs, metrics and traces sharing the same trace ID, with no customer data,
       visible in a UI.
 
-Status: pending.
+Status: done, verified by running it. With `docker compose --profile observability up` the API
+exports OpenTelemetry (`backend/src/cvp/api/telemetria.py`) to a `grafana/otel-lgtm` container:
+one trace per request with SQL spans (Tempo), request count/latency per route and the
+`cvp_data_freshness_seconds{project}` gauge (Prometheus), and one JSON log line per request
+(stdout and Loki). For one `GET /api/v1/projects/{id}/metrics/latest` the same `trace_id` was
+found in the stdout JSON log, in Tempo and in Loki. Spans are scrubbed of client IP, user agent
+and query string; no headers or cookies are captured. Provisioned dashboard
+"CV Platform – user journey" (p95 latency, 5xx rate, traffic, data freshness, traces and logs of
+the key route): [`dashboard.png`](../docs/observability/dashboard.png),
+[`trace.png`](../docs/observability/trace.png). How to run it: README, section "Observability".
+It is off unless `OTEL_EXPORTER_OTLP_ENDPOINT` is set, so the Render deployment does not have it.
 
 ### 11. Alerting on user impact (0-1)
 
-- [ ] Alerts fire on user-visible impact.
+- [x] Alerts fire on user-visible impact.
 
-Status: pending.
+Status: done, verified by running it. `ops/grafana/provisioning/alerting/cvp.yaml` provisions
+`DataStale` (`cvp_data_freshness_seconds > 180` for 2 min: the user sees data older than 3
+minutes; labels `alertname=DataStale`, `service=worker`, `project=<id>`), `ApiErrorRate` (5xx
+above 5 %, not fired in the test) and a webhook contact point to
+`http://host.docker.internal:9000/alert`. Test: `docker compose stop worker` took the rule
+Normal -> Pending (3.3 min after the stop) -> Firing (2 min later) and Grafana POSTed the
+webhook (first refused, nobody listening; then delivered to a throw-away listener); after
+`docker compose start worker` the alert resolved and a `resolved` webhook arrived. Real payloads:
+[`alert-webhook-example.json`](../docs/observability/alert-webhook-example.json); rule list:
+[`alert-rules.png`](../docs/observability/alert-rules.png). The on-call agent (criterion 12)
+consumes this webhook.
 
 ### 12. On-call agent (0-2)
 
