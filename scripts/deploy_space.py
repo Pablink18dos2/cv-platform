@@ -15,7 +15,10 @@ ESPERA_MAX_S = 30 * 60
 
 def main(space: str, carpeta: str) -> None:
     api = HfApi(token=os.environ["HF_TOKEN"])
-    api.create_repo(space, repo_type="space", space_sdk="docker", exist_ok=True)
+    # Solo se crea si falta: si el Space ya existe no se llama a /repos/create, que a una cuenta
+    # sin permiso o sin metodo de pago puede responderle 402 aunque el Space exista.
+    if not api.repo_exists(space, repo_type="space"):
+        api.create_repo(space, repo_type="space", space_sdk="docker", exist_ok=True)
     commit = api.upload_folder(
         repo_id=space,
         repo_type="space",
