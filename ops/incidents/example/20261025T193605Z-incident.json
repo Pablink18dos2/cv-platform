@@ -1,0 +1,49 @@
+{
+  "id": "20261025T193605Z",
+  "project": "00-demo",
+  "outcome": "recovered",
+  "started_at": "2026-10-25T19:36:05.853035+00:00",
+  "finished_at": "2026-10-25T19:37:35.015950+00:00",
+  "timeline": [
+    {
+      "at": "2026-10-25T19:36:05.853139+00:00",
+      "event": "alert_received",
+      "alertname": "DataStale",
+      "service": "worker",
+      "project": "00-demo"
+    },
+    {
+      "at": "2026-10-25T19:36:13.000758+00:00",
+      "event": "evidence_collected",
+      "file": "20261025T193605Z-evidence.json",
+      "metrics": {
+        "series": 8,
+        "newest_minute": "2026-10-25T19:32:00+00:00",
+        "age_seconds": 253
+      }
+    },
+    {
+      "at": "2026-10-25T19:36:29.607155+00:00",
+      "event": "agent_decision",
+      "decision": {
+        "diagnosis": "Worker container has exited with code 137 (SIGKILL) 2 minutes ago and is no longer producing metrics. The logs show normal operation before termination with no application errors.",
+        "action": "restart_worker",
+        "reason": "The worker is stopped and not running. Exit code 137 suggests external termination rather than application failure. API and DB services are healthy, so a restart is the appropriate recovery step to resume metric production."
+      },
+      "validation_error": null
+    },
+    {
+      "at": "2026-10-25T19:36:32.354900+00:00",
+      "event": "action_executed",
+      "action": "restart_worker",
+      "executed": true,
+      "returncode": 0
+    },
+    {
+      "at": "2026-10-25T19:37:35.015877+00:00",
+      "event": "verification",
+      "recovered": true,
+      "age_seconds": 95
+    }
+  ]
+}

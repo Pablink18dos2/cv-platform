@@ -228,3 +228,11 @@ inference, only the replayed recording; the YouTube live stream is not available
 
 Under construction. The backlog is in the GitHub issues; the initial history is in
 [`_docs/tasks.md`](_docs/tasks.md).
+
+## On-call agent
+
+An alert (`DataStale`, the worker stopped producing fresh metrics) wakes `ops/responder/`: code
+collects bounded evidence, a read-only `claude -p` call proposes `restart_worker` or `none`, and
+code only executes what is in its allowlist, with a rate limit, then verifies recovery and records
+the incident. See [`ops/responder/README.md`](ops/responder/README.md); a real incident is in
+[`ops/incidents/example/`](ops/incidents/example/).

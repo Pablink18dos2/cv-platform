@@ -1,0 +1,33 @@
+{
+  "collected_at": "2026-10-25T19:36:05.853237+00:00",
+  "project": "00-demo",
+  "compose_ps": [
+    {
+      "Service": "api",
+      "State": "running",
+      "Status": "Up 4 minutes (healthy)",
+      "Health": "healthy",
+      "ExitCode": 0
+    },
+    {
+      "Service": "db",
+      "State": "running",
+      "Status": "Up 4 minutes (healthy)",
+      "Health": "healthy",
+      "ExitCode": 0
+    },
+    {
+      "Service": "worker",
+      "State": "exited",
+      "Status": "Exited (137) 2 minutes ago",
+      "Health": "",
+      "ExitCode": 137
+    }
+  ],
+  "worker_logs_tail": "worker-1  | WARNING \u26a0\ufe0f user config directory '/root/.config/Ultralytics' is not writable, using '/tmp/Ultralytics'. Set YOLO_CONFIG_DIR to override.\nworker-1  | Creating new Ultralytics Settings v0.0.7 file \u2705 \nworker-1  | View Ultralytics Settings with 'yolo settings' or at '/tmp/Ultralytics/settings.json'\nworker-1  | 2026-10-25 19:32:47,153 INFO    cvp.pipeline.runner: roi (0.15, 0.28, 1.0, 1.0) del YAML -> BBox(x1=288.0, y1=302.40000000000003, x2=1920.0, y2=1080.0) en pixeles sobre un fotograma de 1920x1080\nworker-1  | 2026-10-25 19:33:09,321 INFO    cvp.pipeline.runner: arranca 20261025T193246Z-35ebd990 en 22.4 s: 2 analizador(es), 2 sink(s), roi BBox(x1=288.0, y1=302.40000000000003, x2=1920.0, y2=1080.0)\nworker-1  | 2026-10-25 19:33:14,906 INFO    cvp.analyzers.geometry: traffic_flow: geometria convertida a pixeles sobre un fotograma de 1920x1080\nworker-1  | 2026-10-25 19:33:15,085 INFO    cvp.analyzers.geometry: parking_occupancy: geometria convertida a pixeles sobre un fotograma de 1920x1080\nworker-1  | 2026-10-25 19:33:43,365 INFO    cvp.pipeline.runner: salud 20261025T193246Z-35ebd990: 21 fotogramas en 34 s = 0.62 fps | fuente p50 42.6 ms p95 603.5 ms (21) | detector p50 1008.6 ms p95 2790.9 ms (21) | tracker p50 5.1 ms p95 18.2 ms (21) | sinks 84 escrituras, 0 errores | fuente 0 reconexion(es), 0 re-anclaje(s), retraso max 0.0 s",
+  "metrics": {
+    "series": 8,
+    "newest_minute": "2026-10-25T19:32:00+00:00",
+    "age_seconds": 253
+  }
+}
