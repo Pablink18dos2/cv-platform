@@ -181,16 +181,18 @@ The demo runs for free on [Hugging Face Spaces](https://huggingface.co/docs/hub/
 runs nginx on port 7860 (dashboard + `/api` proxy), the API and one worker for
 `projects/00-demo`, with SQLite in the container's disk.
 
-- **dev**: [`deploy.yml`](.github/workflows/deploy.yml) deploys to the dev Space automatically
-  when the CI workflow succeeds on `main` (or by hand: *Run workflow*, target `dev`).
-- **prod**: manual only (*Run workflow*, target `prod`), behind the `production` environment.
-  The optional `ref` input deploys an older commit or tag, which is the rollback.
+- **Automatic**: [`deploy.yml`](.github/workflows/deploy.yml) deploys to the Space when the CI
+  workflow succeeds on `main`, behind the `production` environment.
+- **Manual and rollback**: *Run workflow* in the Actions tab. The optional `ref` input deploys
+  an older commit or tag, which is the rollback.
+- There is a single Space because a free Hugging Face account only allows one running Space at
+  a time, so there is no separate dev stage.
 - Each deploy uploads the repo to the Space, waits for it to be `RUNNING` and checks
   `/api/v1/projects`.
 
 Setup: a Hugging Face account, a write-access token as the `HF_TOKEN` repository secret, the
-repository variables `HF_SPACE_DEV` and `HF_SPACE_PROD` (format `owner/name`; the Spaces are
-created on the first deploy) and a `production` environment (Settings > Environments).
+repository variable `HF_SPACE_PROD` (format `owner/name`) and a `production` environment
+(Settings > Environments).
 
 Limitations: the disk is ephemeral (history is lost on every restart or deploy); the free
 Space sleeps after inactivity and takes a minute or two to wake; it runs the demo project
