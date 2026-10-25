@@ -52,6 +52,7 @@ runs/
 *.jsonl
 *.mp4
 !tests/fixtures/**/*.mp4
+!deploy/demo/clip.mp4
 
 # Incidentes del responder de guardia (ops/responder): solo se versiona el ejemplo
 ops/incidents/*

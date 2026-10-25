@@ -63,3 +63,19 @@ calle llena). 9 a la derecha (`der-1` lejana a `der-9` cercana) y 2 a la izquier
 - Las muestras de `framing_score` = 0,0: ver qué pasa en esos fotogramas (¿decodificación?).
 - Noche, lluvia y nieve.
 - Una serie de varias horas: no es fiable hasta #26 (deriva de tiempo del decodificador).
+
+## Clip de la demo desplegada (`deploy/demo/`)
+
+La demo ligera de Render no corre detector: reproduce en bucle `deploy/demo/clip.mp4` (854x480,
+5 fps, H.264, 150 s, ~6 MB) y sincroniza con él `deploy/demo/timeline.json` (una muestra por
+segundo: plazas libres, vehículos, cruces; y los eventos `space_freed`/`space_occupied`).
+
+- **Es un fragmento real elegido por actividad, no una muestra representativa**: de una grabación
+  de 12 min del directo (2026-10-25, 19:28 UTC) se eligió la ventana de 150 s con más cambios de
+  plaza (4; ventana 330-480 s de la grabación). El resto de la grabación tiene menos cambios.
+- Está analizado **offline a 5 fps** con el pipeline real de este proyecto (yolo11n ROI 640,
+  bytetrack, `plazas` y `trafico` del `project.yaml`; sin `framing_guard`), y dibujado con el
+  mismo `annotate` de los analizadores más las cajas de detección. Los contadores de cruces
+  dibujados cuentan desde el inicio del clip.
+- Se regenera con `scripts/make_demo_clip.py` (la grabación, con yt-dlp + ffmpeg, está en su
+  docstring). El vídeo de entrada no se versiona.
