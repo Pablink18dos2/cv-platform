@@ -66,6 +66,20 @@ services:
     <<: *backend
     # Un worker, un proyecto. Para otro: `PROJECT=projects/00-demo docker compose up`.
     command: ["cvp", "run", "${PROJECT:-projects/01-parking-trafico}"]
+    environment:
+      <<: *backend-env
+      # Hilos de torch. Por defecto ultralytics usa min(8, cpu_count - 1) y reescribe
+      # torch.set_num_threads() en la primera inferencia, ignorando OMP_NUM_THREADS. Con 8
+      # hilos OpenMP espera en bucle activo en cada barrera: en cuanto el host (Windows/WSL2)
+      # no puede dar los nucleos a la vez, una inferencia de YOLO11n pasa de ~50 ms a
+      # cientos de ms o segundos (medido aqui: p50 579 ms con 8 hilos frente a 106-136 ms
+      # con 4, que ademas no se degradan con cargas ajenas).
+      #   OMP/MKL_NUM_THREADS: hilos que pide la libreria al arrancar.
+      #   PYTHON_CPU_COUNT:    lo que ve ultralytics como cpu_count(); usa valor - 1 hilos.
+      # Para cambiar: CVP_THREADS=6 CVP_CPU_COUNT=7 docker compose up -d worker
+      OMP_NUM_THREADS: ${CVP_THREADS:-4}
+      MKL_NUM_THREADS: ${CVP_THREADS:-4}
+      PYTHON_CPU_COUNT: ${CVP_CPU_COUNT:-5}
     depends_on:
       # La API es quien crea el esquema en Postgres al arrancar; esperarla evita que api y
       # worker lo creen a la vez.

@@ -13,11 +13,16 @@ COPY --from=ghcr.io/astral-sh/uv:0.11 /uv /usr/local/bin/uv
 ENV VIRTUAL_ENV=/opt/venv \
     PATH=/opt/venv/bin:$PATH \
     UV_LINK_MODE=copy \
+    UV_COMPILE_BYTECODE=1 \
     PYTHONUNBUFFERED=1
 RUN uv venv "$VIRTUAL_ENV"
 
 WORKDIR /app
 
+# UV_COMPILE_BYTECODE: sin el, uv instala los paquetes sin .pyc y cada arranque del contenedor
+# recompila ~1000 modulos de ultralytics/torch (medido: 5,3 s de `compile` en la primera
+# inferencia), porque la capa del contenedor se descarta al reiniciarlo.
+#
 # Dependencias, en su propia capa: cambiar codigo no vuelve a descargar torch.
 #
 # El uv.lock resuelve torch desde PyPI (el `[tool.uv.sources]` del pyproject solo vale para
