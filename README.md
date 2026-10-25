@@ -176,6 +176,9 @@ _docs/             specification, architecture and working guides
 
 ## Deployment
 
+Live demo: <https://cv-platform-mrg8.onrender.com> (the free service sleeps when idle; the first request can take about a minute).
+
+
 The public demo runs for free on [Render](https://render.com) (free web service, Docker runtime:
 512 MB RAM, 0.1 CPU). The full image (torch + YOLO) does not fit in 512 MB, so Render runs a
 **light version**: the real dashboard and API plus **recorded data**, with no detector and no

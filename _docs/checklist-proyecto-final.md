@@ -18,8 +18,8 @@ current status of each one in this repository.
 | 5 | Application | 2 | Done |
 | 6 | Testing | 2 | Done |
 | 7 | Containerization | 2 | Done |
-| 8 | Deployment | 2 | Ready, pending first real deploy |
-| 9 | CI/CD | 3 | Level 2 of 3, pending first real deploy |
+| 8 | Deployment | 2 | Done: https://cv-platform-mrg8.onrender.com |
+| 9 | CI/CD | 3 | Level 2 of 3 done |
 | 10 | Observability | 2 | Pending |
 | 11 | Alerting on user impact | 1 | Pending |
 | 12 | On-call agent | 2 | Pending |
@@ -79,21 +79,21 @@ with `docker compose up --build`.
 
 ### 8. Deployment (0-2)
 
-- [ ] A public URL, or a clear demo of the deployed system.
+- [x] A public URL, or a clear demo of the deployed system: <https://cv-platform-mrg8.onrender.com>.
 
-Status: ready, **pending first real deploy**. Render free tier (Docker), a single environment.
+Status: done, deployed on 2026-10-25 (deploy workflow run green, including the smoke test). Render free tier (Docker), a single environment.
 It serves a light image (`docker/render.Dockerfile`, blueprint `render.yaml`) with the real
 dashboard and API over a recorded 30-minute run replayed in a loop (not live inference); the
-full image with the detector is `docker compose up`. The public URL goes here once the service
-exists.
+full image with the detector is `docker compose up`. The free service sleeps after 15 minutes
+without traffic, so the first request can take about a minute.
 
 ### 9. CI/CD (0-3)
 
 - [x] Level 1: tests run on every pull request.
-- [x] Level 2: level 1 plus automatic continuous delivery (written; pending first real deploy).
+- [x] Level 2: level 1 plus automatic continuous delivery.
 - [ ] Level 3: level 2 plus deployment to a dev environment and a manual deployment to production.
 
-Status: level 2, pending first real deploy. `.github/workflows/ci.yml` runs on every push to
+Status: level 2, verified with a real deploy. `.github/workflows/ci.yml` runs on every push to
 `main` and on every pull request: ruff lint, ruff format check,
 `uv run pytest -m "not slow and not network"`, and for the front end `npm test` and
 `npm run build`. `.github/workflows/deploy.yml` runs when CI succeeds on `main` (or by hand, with
@@ -122,5 +122,5 @@ Status: pending.
 
 ---
 
-**Points confirmed so far: 7 / 24** (Application 2, Testing 2, Containerization 2, CI/CD 1).
+**Points confirmed so far: 10 / 24** (Application 2, Testing 2, Containerization 2, Deployment 2, CI/CD 2).
 Pass mark: 10.
