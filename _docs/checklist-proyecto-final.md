@@ -11,10 +11,10 @@ current status of each one in this repository.
 
 | # | Criterion | Max | Status |
 |---|---|---|---|
-| 1 | Problem Description | 2 | Pending final review |
-| 2 | Product Specification | 2 | Pending final review |
-| 3 | Agent Team Specification | 2 | Pending final review |
-| 4 | Context Management | 2 | Pending final review |
+| 1 | Problem Description | 2 | Done |
+| 2 | Product Specification | 2 | Done |
+| 3 | Agent Team Specification | 2 | Done |
+| 4 | Context Management | 2 | Done |
 | 5 | Application | 2 | Done |
 | 6 | Testing | 2 | Done |
 | 7 | Containerization | 2 | Done |
@@ -28,32 +28,32 @@ current status of each one in this repository.
 
 ### 1. Problem Description (0-2)
 
-- [ ] The README describes the problem, the functionality and the expected behavior.
+- [x] The README describes the problem, the functionality and the expected behavior.
 
-Status: pending final review. Material exists in [`README.md`](../README.md) ("The problem",
-"What it does") and [`plan.md`](plan.md); not yet marked done.
+Status: done. Material in [`README.md`](../README.md) ("The problem",
+"What it does") and [`plan.md`](plan.md).
 
 ### 2. Product Specification (0-2)
 
-- [ ] A product spec exists.
-- [ ] A public task tracker with acceptance criteria, with evidence of use by agents.
+- [x] A product spec exists.
+- [x] A public task tracker with acceptance criteria, with evidence of use by agents.
 
-Status: pending final review. Spec: [`plan.md`](plan.md). Tracker: the GitHub issues of this
-repository, each with acceptance criteria. Evidence of agent use still has to be gathered
-(see [`ai-usage-report.md`](ai-usage-report.md) and [`process.md`](process.md)).
+Status: done. Spec: [`plan.md`](plan.md). Tracker: the public GitHub issues of this repository
+(36), each with acceptance criteria; agents comment their results on the issues and commits
+reference them (for example #14, #15, #24, #26). Process: [`process.md`](process.md).
 
 ### 3. Agent Team Specification (0-2)
 
-- [ ] The agent team (roles, lifecycle, process) is specified.
+- [x] The agent team (roles, lifecycle, process) is specified.
 
-Status: pending final review. Roles and lifecycle: [`process.md`](process.md); role
+Status: done. Roles and lifecycle: [`process.md`](process.md); role
 definitions in [`team/`](team/) (`pm.md`, `software-engineer.md`, `qa-engineer.md`).
 
 ### 4. Context Management (0-2)
 
-- [ ] `AGENTS.md` plus modular documents loaded on demand.
+- [x] `AGENTS.md` plus modular documents loaded on demand.
 
-Status: pending final review. [`AGENTS.md`](../AGENTS.md) is short and links to modular
+Status: done. [`AGENTS.md`](../AGENTS.md) is short and links to modular
 documents in `_docs/` (plan, architecture, process, testing guidelines, design system, API).
 
 ### 5. Application (0-2)
@@ -168,5 +168,5 @@ reproduce the full on-call demo".
 
 ---
 
-**Points confirmed so far: 15 / 24** (Application 2, Testing 2, Containerization 2, Deployment 2, CI/CD 2, Observability 2, Alerting 1, On-call agent 2). Criteria 1-4 (8 points) stay pending final review.
+**Points confirmed so far: 23 / 24** (criteria 1-8: 2 each, CI/CD 2 of 3, Observability 2, Alerting 1, On-call agent 2). The missing point is CI/CD level 3 (a separate dev environment), not possible on a single free instance.
 Pass mark: 10.
